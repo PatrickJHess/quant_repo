@@ -1,0 +1,35 @@
+# Python / Build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+build/
+dist/
+*.egg-info/
+
+# Environments
+.env
+.env*
+venv/
+env/
+.venv/
+
+# Jupyter / MyST
+.ipynb_checkpoints/
+_build/
+.myst/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Secrets / Credentials
+credentials.json
+client_secrets.json
+
+# Keep gitignore tracked
+!.gitignore
+
+
+
+

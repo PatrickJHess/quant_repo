@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "financial_quant"
+version = "0.1.0"
+description = "Financial quantitative analysis tools"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    # Core Data
+    "numpy",
+    "pandas",
+    "requests",
+    "openpyxl",
+    "pathvalidate",
+    "python-dateutil",
+    "pandas-datareader",
+    "pandas_market_calendars",
+    "pandas<3.0",
+    "matplotlib",
+    "holidays",
+    
+    # Advanced Math & Stats
+    "scipy",
+    "statsmodels",
+    # massive
+    "massive"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
