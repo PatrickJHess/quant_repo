@@ -21,6 +21,7 @@ dependencies = [
     "pandas<3.0",
     "matplotlib",
     "holidays",
+    "'pathvalidate'",
     
     # Advanced Math & Stats
     "scipy",

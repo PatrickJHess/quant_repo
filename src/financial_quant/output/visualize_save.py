@@ -3,6 +3,7 @@ import sys
 import re
 import pandas as pd
 import numpy as np
+from pathvalidate import sanitize_filepath
 from matplotlib import pyplot as plt
 import openpyxl
 from openpyxl.utils import get_column_letter
