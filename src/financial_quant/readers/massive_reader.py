@@ -161,6 +161,55 @@ class MASSIVEReader(MassiveBase):
         )
 
     # =========================================================================
+    # DIVIDENDS PROVIDER METHOD
+    # =========================================================================
+    def get_dividend_data(self, ticker: str, start_date: str = "1970-01-01", end_date: str = "2099-12-31") -> pd.DataFrame:
+        """
+        Pulls historical cash dividend distributions for a specific stock ticker.
+        Indexes the resulting DataFrame by the ex-dividend date.
+        """
+        print(f"💰 Fetching dividend data for {ticker}...")
+
+        def _fetch():
+            import requests
+            url = "https://api.massive.com/stocks/v1/dividends"
+            
+            params = {
+                "ticker": ticker,
+                "limit": 1000, 
+                "sort": "ex_dividend_date.asc",
+                "apiKey": self.api_key
+            }
+
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            
+            # Massive's standard is returning a 'results' array
+            import pandas as pd
+            df = pd.DataFrame(data.get("results", []))
+
+            if not df.empty:
+                # Use ex_dividend_date as the primary index for time-series alignment
+                time_col = 'ex_dividend_date'
+                if time_col in df.columns:
+                    df[time_col] = pd.to_datetime(df[time_col])
+                    df.set_index(time_col, inplace=True)
+                    
+                    # Dividends are daily events; normalize to strip any trailing time artifacts
+                    df.index = df.index.normalize()
+            return df
+
+        # Hand off to the universal cache engine
+        return self._execute_with_cache(
+            fetch_callback=_fetch,
+            ticker=ticker,
+            start_date=start_date,
+            end_date=end_date,
+            resolution="dividends"
+        )
+    # =========================================================================
     # FUTURES PROVIDER METHODS
     # =========================================================================
     def get_futures_data(self, contract_symbol: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
