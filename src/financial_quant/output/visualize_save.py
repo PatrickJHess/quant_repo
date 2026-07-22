@@ -11,80 +11,81 @@ from IPython.display import display, Markdown as md
 from pathlib import Path
 
 
-def one_y_axis(x_data, y_data_list, title, series_labels, xlabel, ylabel,
-                       markers, figure_size, y_limits,save_config={}, fill_config={},
-                       colors=None):
-    '''
+def one_y_axis(x_data, y_data_list, title="", xlabel="", ylabel="", 
+                     series_labels=None, markers=None, colors=None,
+                     figure_size=(10, 6), y_limits=None, 
+                     save_config=None, fill_config=None):
+    """
     Plots data on a single y-axis.
-
 
     Args:
         x_data (array-like): Data for the x-axis.
         y_data_list (list of array-like): A list of datasets for the y-axis.
         title (str): The title of the graph.
-        series_labels (list of str): Identifiers for each data series in the legend.
         xlabel (str): The label for the x-axis.
         ylabel (str): The label for the y-axis.
-        markers (list of str): The markers to use for each series.
+        series_labels (list of str, optional): Identifiers for each data series. 
+        markers (list of str, optional): The markers to use for each series.
+        colors (list of str, optional): Colors for each series.
         figure_size (tuple): The width and height of the figure in inches.
-        y_limits (tuple): The minimum and maximum values for the y-axis.
-        save_config (dict, optional): Configuration for saving the file, passed
-            to save_results(). Keys: 'volume', 'chapter', 'file_name'. Defaults to {}.
-        fill_config (dict, optional): Configuration for filling areas.
-            Keys: 'Between' (list of 1 or 2 indices from y_data_list),
-                  'Start' (int, start index), 'End' (int, end index),
-                  'Colors' (str), 'Labels' (str), 'Alpha' (float).
-            Defaults to {}.
-    Raises:
-        ValueError: If input lists for series, markers, or colors do not match the number of y-datasets.
-    '''
-    import numpy as np
-    from matplotlib import pyplot as plt
+        y_limits (tuple, optional): The (min, max) values for the y-axis.
+        save_config (dict, optional): Config for saving the file. Keys: 'volume', 'chapter', 'file_name'.
+        fill_config (dict, optional): Config for filling areas. Keys: 'Between' (list of 1 or 2 indices),
+                                      'Start', 'End', 'Colors', 'Labels', 'Alpha'.
+    """
+
+
     num_series = len(y_data_list)
-    # --- Input Validation ---
-    if not all(len(lst) == num_series for lst in [series_labels, markers]):
-        raise ValueError("The 'series_labels' and 'markers' lists must have the same length as 'y_data_list'.")
 
+    # --- Smart Defaults (Frictionless Inputs) ---
+    series_labels = series_labels or [f"Series {i+1}" for i in range(num_series)]
+    markers = markers or [""] * num_series
+    colors = colors or plt.cm.viridis_r(np.linspace(0, 1, num_series))
 
-    if colors and len(colors) != num_series:
-        raise ValueError("The 'colors' list must have the same length as 'y_data_list'.")
+    # Input Validation
+    if not (len(series_labels) == len(markers) == len(colors) == num_series):
+        raise ValueError("Lengths of 'series_labels', 'markers', and 'colors' must match 'y_data_list'.")
 
+    # --- Plotting Setup (Protects Global State) ---
+    with plt.style.context('ggplot'):
+        fig, ax = plt.subplots(figsize=figure_size)
+        fig.suptitle(title)
 
-    # --- Plotting Setup ---
-    fig = plt.figure(figsize=figure_size)
-    fig.suptitle(title)
-    plt.style.use('ggplot')
+        # --- Pythonic Loop ---
+        for y_data, label, marker, color in zip(y_data_list, series_labels, markers, colors):
+            ax.plot(x_data, y_data, label=label, marker=marker, color=color)
 
+        # --- Implement the Missing Fill Feature ---
+        if fill_config:
+            indices = fill_config.get('Between', [0])
+            y1 = y_data_list[indices[0]]
+            y2 = y_data_list[indices[1]] if len(indices) > 1 else np.zeros_like(y1)
+            
+            start, end = fill_config.get('Start', 0), fill_config.get('End', len(x_data))
+            
+            ax.fill_between(
+                x_data[start:end], y1[start:end], y2[start:end],
+                color=fill_config.get('Colors', 'gray'),
+                alpha=fill_config.get('Alpha', 0.3),
+                label=fill_config.get('Labels', None)
+            )
 
-    if colors is None:
-        # Generate a default color cycle if none are provided
-        colors = plt.cm.viridis_r(np.linspace(0, 1, num_series))
+        # --- Final Touches ---
+        if y_limits:
+            ax.set_ylim(y_limits)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.legend()
+        plt.tight_layout()
 
+        # --- Save Figure ---
+        if save_config:
+            # Assuming save_results is imported/defined elsewhere in your script
+            path = save_results(save_config=save_config)
+            if path:
+                plt.savefig(path, dpi=300, bbox_inches='tight')
 
-# --- Plot Data Series ---
-    for i in range(num_series):
-        plt.plot(x_data, y_data_list[i], label=series_labels[i], marker=markers[i], color=colors[i])
-
-
-    # --- Final Touches ---
-    plt.ylim(y_limits)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.legend()
-    plt.tight_layout()
-
-
-    # --- Save Figure ---
-    # Calls the save_results function (assumed to be defined)
-
-
-    path = save_results(save_config=save_config)
-    if path:
-     plt.savefig(path, dpi=300, bbox_inches='tight')
-
-
-    plt.show()
-
+        plt.show()
 def create_workbook(df,sheet_name='sheet1', save_config=None):
     """
     Writes a DataFrame to a specific sheet in an Excel workbook and auto-fits
