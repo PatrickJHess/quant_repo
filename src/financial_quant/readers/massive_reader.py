@@ -10,40 +10,7 @@ from .massive_base import MassiveBase
 
 class MASSIVEReader(MassiveBase):
     def __init__(self, api_key: str = None, key_name: str = "", calls_per_minute: int = 4):
-      """
-          Main interface for fetching historical OHLCV data for Stocks and Futures.
-
-          Inherits from `MassiveBase` to utilize a robust local caching engine, 
-          automatic rate-limit handling, and secure API key management. This reader 
-          intelligently parses multi-format timestamps (milliseconds vs. 19-digit nanoseconds) 
-          and normalizes all intraday data to US Eastern Time (America/New_York) while 
-          keeping daily/weekly session dates timezone-naive to prevent date-shifting bugs.
-
-          Key Features:
-              - Smart Caching: Saves data to disk (or Google Drive in Colab). Automatically 
-                merges new API data with old local data to minimize bandwidth.
-              - Timezone Correction: Aligns intraday timestamps to the Wall Street 9:30 AM 
-                opening bell, natively handling Daylight Saving Time adjustments.
-              - Dynamic Routing: Seamlessly translates standard Polygon timespans (e.g., 'minute') 
-                into Massive's custom backend architecture (e.g., '15min', 'session').
-
-          Args:
-              api_key (str, optional): Direct string of the Massive/Polygon API key. Defaults to None.
-              key_name (str, optional): The environment variable name to search for if api_key 
-                  is None (e.g., "MASSIVE_KEY"). Defaults to "".
-              calls_per_minute (int, optional): The maximum number of API calls allowed per minute 
-                  before the engine forces a cooldown sleep. Defaults to 4.
-
-          Example:
-              >>> reader = MASSIVEReader(key_name="MASSIVE_API_KEY")
-              >>> 
-              >>> # Fetch 15-minute futures data
-              >>> df_futures = reader.get_futures_data("ESM6", "2026-06-01", "2026-06-18", timespan="minute", multiplier=15)
-              >>> 
-              >>> # Fetch Daily stock data
-              >>> df_stocks = reader.get_stock_data("AAPL", "2020-01-01", "2026-01-01", timespan="day", multiplier=1)
-        """
-      super(MASSIVEReader, self).__init__(api_key=api_key, key_name=key_name, calls_per_minute=calls_per_minute)
+        super(MASSIVEReader, self).__init__(api_key=api_key, key_name=key_name, calls_per_minute=calls_per_minute)
 
     def _execute_with_cache(self, fetch_callback, ticker, start_date, end_date, resolution):
         """
@@ -57,16 +24,15 @@ class MASSIVEReader(MassiveBase):
         filepath = os.path.join(self.cache_dir, filename)
 
         # 1. METADATA VALIDATION CHECK (CACHE HIT)
-        
-        # Inherited _check_cache_metadata
         if os.path.exists(filepath) and self._check_cache_metadata(cache_id, start_date, end_date):
             print(f"✅ Loaded {ticker} ({resolution}) from local metadata-verified cache.")
 
-            # --- THE FIX: Clean read, no timezone conversion! ---
-            df = pd.read_csv(filepath, index_col=0, parse_dates=True)
-
-            # Optional legacy sanitizer just in case
-            if df.index.tz is not None:
+            df = pd.read_csv(filepath, index_col=0)
+            df.index = pd.to_datetime(df.index, errors='coerce',utc=True)
+        # Drop unparseable rows
+            df = df[df.index.notnull()]
+            # Strip timezone if present
+            if getattr(df.index, 'tz', None) is not None:
                 df.index = df.index.tz_localize(None)
 
             df = df.sort_index()
@@ -77,8 +43,6 @@ class MASSIVEReader(MassiveBase):
         self._enforce_speed_limit()
 
         try:
-            # Execute the specific API logic passed from the parent function
-            # Cache is missing or incomplete API call made from stock or futures method
             df = fetch_callback()
 
             if df is None or df.empty:
@@ -88,21 +52,21 @@ class MASSIVEReader(MassiveBase):
 
             # If an older slice already existed, merge them together cleanly
             if os.path.exists(filepath):
-                old_df = pd.read_csv(filepath, index_col=0, parse_dates=True)
-      #          old_df.index = pd.to_datetime(old_df.index, utc=True).tz_convert('America/New_York')
-                if old_df.index.tz is not None:
-                   old_df.index = old_df.index.tz_localize(None)
+                old_df = pd.read_csv(filepath, index_col=0)
+                old_df.index = pd.to_datetime(old_df.index, errors='coerce',utc=True)
+                
+                if getattr(old_df.index, 'tz', None) is not None:
+                    old_df.index = old_df.index.tz_localize(None)
+                    
                 df = pd.concat([old_df, df]).drop_duplicates().sort_index()
 
             # Save data and update global metadata manifest tracking
             df.to_csv(filepath)
 
-            # Inerited _update_cache_metadata
             self._update_cache_metadata(cache_id, start_date, end_date)
             print(f"💾 Saved {ticker} data and metadata to cache.")
 
             df = df.sort_index()
-            # Slice frame locally to return the exact subset requested
             return df.loc[start_date:end_date]
 
         except Exception as e:
@@ -111,7 +75,6 @@ class MASSIVEReader(MassiveBase):
                 print("😴 Forcing a hard 65-second server-reset penalty...")
                 time.sleep(65)
                 print(f"🔄 Attempting {ticker} one final time...")
-                # Recursive retry
                 return self._execute_with_cache(fetch_callback, ticker, start_date, end_date, resolution)
             else:
                 print(f"❌ Connection or Parsing error: {e}")
@@ -121,14 +84,6 @@ class MASSIVEReader(MassiveBase):
     # STOCKS & EQUITIES PROVIDER METHODS
     # =========================================================================
     def get_stock_data(self, ticker: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
-        """
-        Pulls OHLCV historical data dynamically.
-        Examples:
-          - 1 Day: timespan="day", multiplier=1
-          - 15 Min: timespan="minute", multiplier=15
-          - 1 Month: timespan="month", multiplier=1
-           - return is the callback function _fetch()
-        """
         print(f"📈 Fetching stock data for {ticker} ({multiplier} {timespan})...")
 
         def _fetch():
@@ -136,7 +91,7 @@ class MASSIVEReader(MassiveBase):
                 ticker=ticker,
                 multiplier=multiplier,
                 timespan=timespan,
-                limit=50000, # Maximize the payload limit
+                limit=50000,
                 from_=start_date,
                 to=end_date
             )
@@ -144,12 +99,9 @@ class MASSIVEReader(MassiveBase):
             if not df.empty:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
-
-                # 2. Localize to UTC, then convert to Wall Street time (EST/EDT)
                 df.index = df.index.tz_localize('UTC').tz_convert('America/New_York').tz_localize(None)
             return df
 
-        # Create a unique cache ID like "1_day" or "15_minute"
         resolution_label = f"{multiplier}_{timespan}"
 
         return self._execute_with_cache(
@@ -164,16 +116,10 @@ class MASSIVEReader(MassiveBase):
     # DIVIDENDS PROVIDER METHOD
     # =========================================================================
     def get_dividend_data(self, ticker: str, start_date: str = "1970-01-01", end_date: str = "2099-12-31") -> pd.DataFrame:
-        """
-        Pulls historical cash dividend distributions for a specific stock ticker.
-        Indexes the resulting DataFrame by the ex-dividend date.
-        """
         print(f"💰 Fetching dividend data for {ticker}...")
 
         def _fetch():
-            import requests
             url = "https://api.massive.com/stocks/v1/dividends"
-            
             params = {
                 "ticker": ticker,
                 "limit": 1000, 
@@ -185,23 +131,16 @@ class MASSIVEReader(MassiveBase):
             response.raise_for_status()
 
             data = response.json()
-            
-            # Massive's standard is returning a 'results' array
-            import pandas as pd
             df = pd.DataFrame(data.get("results", []))
 
             if not df.empty:
-                # Use ex_dividend_date as the primary index for time-series alignment
                 time_col = 'ex_dividend_date'
                 if time_col in df.columns:
                     df[time_col] = pd.to_datetime(df[time_col])
                     df.set_index(time_col, inplace=True)
-                    
-                    # Dividends are daily events; normalize to strip any trailing time artifacts
                     df.index = df.index.normalize()
             return df
 
-        # Hand off to the universal cache engine
         return self._execute_with_cache(
             fetch_callback=_fetch,
             ticker=ticker,
@@ -209,37 +148,30 @@ class MASSIVEReader(MassiveBase):
             end_date=end_date,
             resolution="dividends"
         )
+
     # =========================================================================
     # FUTURES PROVIDER METHODS
     # =========================================================================
     def get_futures_data(self, contract_symbol: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
-        """
-        Pulls OHLCV historical data dynamically for futures using a custom endpoint.
-        - return is the callback function _fetch()
-        """
         print(f"🚀 Fetching futures data for {contract_symbol} ({multiplier} {timespan})...")
 
         def _fetch():
-            # 1. Use the Massive base URL
             url = f"https://api.massive.com/futures/v1/aggs/{contract_symbol}"
 
-            # 2. Translate standard timespans into Massive's required abbreviations
             massive_timespan = timespan.lower()
             if massive_timespan == "minute":
                 massive_timespan = "min"
             elif massive_timespan == "day":
                 massive_timespan = "session"
 
-            # e.g., combines 15 and "min" into "15min"
             resolution_string = f"{multiplier}{massive_timespan}"
 
-            # 3. Package the query parameters EXACTLY how Massive's docs require them
             params = {
                 "resolution": resolution_string,
                 "window_start.gte": start_date,
                 "window_start.lte": end_date,
-                "limit": 50000,               # Maximize the payload limit
-                "sort": "window_start.asc",   # Ensure chronological order
+                "limit": 50000,
+                "sort": "window_start.asc",
                 "apiKey": self.api_key
             }
 
@@ -250,7 +182,6 @@ class MASSIVEReader(MassiveBase):
             df = pd.DataFrame(data.get("results", []))
 
             if not df.empty:
-                # Find the correct time column
                 if 'timestamp' in df.columns:
                     time_col = 'timestamp'
                 elif 'window_start' in df.columns:
@@ -258,7 +189,6 @@ class MASSIVEReader(MassiveBase):
                 else:
                     time_col = 't'
 
-                # Parse Massive's 19-digit nanosecond timestamps
                 try:
                     df[time_col] = pd.to_datetime(df[time_col], unit='ns')
                 except ValueError:
@@ -266,13 +196,10 @@ class MASSIVEReader(MassiveBase):
 
                 df.set_index(time_col, inplace=True)
 
-                # --- TIMEZONE SHIFT ---
                 if timespan in ['day', 'week', 'month', 'session']:
-                    # Keep Daily data pure (removes the 20:00:00 midnight shift bug)
                     df.index = df.index.normalize()
                 else:
-                    # Intraday data perfectly shifts to New York time
-                    if df.index.tz is None:
+                    if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
                     df.index = df.index.tz_convert('America/New_York').tz_localize(None)
 
@@ -280,7 +207,6 @@ class MASSIVEReader(MassiveBase):
 
         resolution_label = f"{multiplier}_{timespan}"
 
-        # Hand it off to the exact same cache engine!
         return self._execute_with_cache(
             fetch_callback=_fetch,
             ticker=contract_symbol,
