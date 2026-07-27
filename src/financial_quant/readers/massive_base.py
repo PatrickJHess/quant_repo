@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import json
-from polygon import RESTClient # Assuming this is what MASSIVE uses
+from massive import RESTClient # Assuming this is what MASSIVE uses
 from financial_quant.security.credentials import scavenge_api_key
 from financial_quant.utils.cache import setup_cache_dir
 
