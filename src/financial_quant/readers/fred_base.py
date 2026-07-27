@@ -1,86 +1,27 @@
-import sys
 import os
+import time
 import requests
 import getpass
-
+from financial_quant.security.credentials import scavenge_api_key
+from financial_quant.utils import setup_cache_dir
 
 class FredBase:
     def __init__(self, api_key=None, key_name="fred_key"):
         """
-        Base class that initializes the cache directories, authenticates 
-        the API key, and provides a resilient network requester.
+        Base class for FRED. Uses shared utilities for setup, but maintains
+        its own reactive network shield.
         """
-        # --- CACHE DIRECTORY ROUTING ---
-        if 'google.colab' in sys.modules:
-            print("☁️ Colab environment detected. Mounting Google Drive...")
-            from google.colab import drive
-            try:
-                drive.mount('/content/drive')
-                self.cache_dir = '/content/drive/MyDrive/FRED'
-            except Exception as e:
-                print(f"✅ Drive mount failed, defaulting to local cache: {e}")
-                self.cache_dir = os.path.expanduser("~/fred")
-        else:
-            # 1. Check for a globally set environment variable for shared Hub environments
-            shared_env_path = os.environ.get("FRED_SHARED_CACHE")
-            
-            if shared_env_path:
-                self.cache_dir = shared_env_path
-            else:
-                # 2. Default lock to the user's personal home directory
-                self.cache_dir = os.path.expanduser("~/fred")
+        # 1. Use shared utility to build cache
+        self.cache_dir = setup_cache_dir(folder_name="FRED", shared_env_var="FRED_SHARED_CACHE")
 
-        print(f"📂 FRED Cache anchored at: {self.cache_dir}")
-
-        if not os.path.exists(self.cache_dir):
-            try:
-                os.makedirs(self.cache_dir, exist_ok=True)
-            except PermissionError:
-                print(f"⚠️ Warning: Lacking permission to create {self.cache_dir}. Cache may fail.")
-
-        # --- API KEY LOGIC ---
-        self.api_key = None
+        # 2. Use shared utility to hunt for the key (this auto-triggers the UI wizard if needed!)
         fallback_names = [key_name, "fred_key", "FRED_API_KEY", "FRED_KEY"]
+        self.api_key = scavenge_api_key(api_key=api_key, fallback_names=fallback_names)
 
-        # 1. EXPLICIT KEY PASSED
-        if api_key:
-            self.api_key = api_key
-
-        # 2. CHECK COLAB SECRETS
-        elif 'google.colab' in sys.modules:
-            try:
-                from google.colab import userdata
-                for name_to_check in fallback_names:
-                    try:
-                        potential_key = userdata.get(name_to_check)
-                        if potential_key:
-                            self.api_key = potential_key
-                            print(f"✅ Key loaded seamlessly from Colab Secrets ('{name_to_check}')")
-                            break 
-                    except Exception:
-                        continue 
-            except ImportError:
-                pass 
-
-        # 3. CHECK OS ENVIRONMENT
+        # 3. FRED-specific fallback (Graceful degradation)
         if not self.api_key:
-            for name_to_check in fallback_names:
-                if os.environ.get(name_to_check):
-                    self.api_key = os.environ.get(name_to_check)
-                    print(f"✅ Key loaded from local environment ('{name_to_check}')")
-                    break
-
-        # 4. FALLBACK PROMPT
-        if not self.api_key:
-            print(f"⚠️ Could not find a key named '{key_name}' in Colab Secrets or local environment.")
-            print("If you have a FRED key, paste it now; otherwise just press Enter:")
-            key_input = getpass.getpass(prompt="> ")
-            if key_input.strip():
-                self.api_key = key_input.strip()
-                os.environ[key_name] = self.api_key 
-                print("✅ Key loaded successfully from manual input!")
-            else:
-                print("⚠️ No key entered. Defaulting to pandas_datareader.")
+            # If we get here, it means the user cancelled the secure_key_setup wizard.
+            print("⚠️ No key loaded. Defaulting to pandas_datareader for basic series.")
 
     # --- REACTIVE NETWORK SHIELD ---
     def _make_api_request(self, url, max_retries=3, series_id=None):
@@ -126,4 +67,3 @@ class FredBase:
             
         print(f"❌ Max retries ({max_retries}) exceeded. The API is strictly rate-limiting you.")
         return None
-

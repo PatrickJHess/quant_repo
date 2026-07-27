@@ -271,80 +271,48 @@ def secure_key_setup(key_name="FRED_KEY"):
                 print(f"\n\u274C Error saving key: {e}")
 
 
-def load_key_to_env(key_name="FRED_KEY"):
+def scavenge_api_key(api_key: str = None, fallback_names: list = None) -> str:
     """
-    Silently loads the API key. If it fails, acts as a router to the Setup UI.
-    """
-    if os.environ.get(key_name): return
-
-    in_colab = 'google.colab' in sys.modules
-    if in_colab:
-        try:
-            from google.colab import userdata
-            colab_key = userdata.get(key_name)
-            if colab_key:
-                os.environ[key_name] = colab_key
-                return
-        except: pass 
-
-    dot_file = f".{key_name.lower()}"
-    if os.path.exists(dot_file):
-        with open(dot_file, "r") as f:
-            saved_key = f.read().strip()
-            if saved_key:
-                os.environ[key_name] = saved_key
-                return
-
-    # IF ALL FAILS -> Route to Setup UI
-    secure_key_setup(key_name)
-    
-    # The Colab Trap
-    if in_colab:
-        raise RuntimeError(f"[\u26A0\uFE0F] Setup required! Please complete the wizard above, then re-run this cell.")
-
-
-
-def get_api_key(api_key: str = None, key_name: str = "API_KEY", fallback_names: list = None) -> str:
-    """
-    Universally hunts for an API key across Colab, Local OS, and manual inputs.
-    Returns the key as a string, or None if the user leaves the prompt blank.
+    Hunts for an API key in passed arguments, Colab Secrets, and OS environment variables.
+    If not found, launches the secure_key_setup UI to prompt the user.
     """
     if api_key:
         return api_key
-        
-    if not fallback_names:
-        fallback_names = [key_name, key_name.upper(), key_name.lower()]
 
-    # 1. CHECK COLAB SECRETS (Safe Check)
+    if fallback_names:
+        fallback_names = [name for name in fallback_names if name and name.strip()]
+    if not fallback_names:
+        fallback_names = ["API_KEY"] # Default if nothing is passed
+
+    # 1. Check Colab Secrets
     if 'google.colab' in sys.modules:
         try:
             from google.colab import userdata
-            active_secrets = userdata.get_keys() if hasattr(userdata, 'get_keys') else []
-            
             for name in fallback_names:
-                if name in active_secrets:
+                try:
                     potential_key = userdata.get(name)
                     if potential_key:
                         print(f"✅ Key loaded seamlessly from Colab Secrets ('{name}')")
                         return potential_key
+                except Exception:
+                    continue
         except ImportError:
-            pass 
+            pass
 
-    # 2. CHECK OS ENVIRONMENT
+    # 2. Check OS Environment
     for name in fallback_names:
-        if os.environ.get(name):
+        potential_key = os.environ.get(name)
+        if potential_key:
             print(f"✅ Key loaded from local environment ('{name}')")
-            return os.environ.get(name)
+            return potential_key
 
-    # 3. FALLBACK PROMPT
-    print(f"⚠️ Could not find '{key_name}' in Colab Secrets or local environment.")
-    print("If you have a key, paste it now; otherwise just press Enter:")
-    key_input = getpass.getpass(prompt="> ").strip()
-    
-    if key_input:
-        os.environ[key_name] = key_input 
-        print("✅ Key loaded successfully from manual input!")
-        return key_input
-        
-    # If they press enter without typing anything
-    return None
+    # 3. FALLBACK: Route to the Setup UI
+    primary_key_name = fallback_names[0]
+    print(f"⚠️ Could not find '{primary_key_name}' automatically. Launching setup...")
+
+    # Launch your master UI wizard
+    secure_key_setup(primary_key_name)
+
+    # After the wizard completes successfully, the key is injected into os.environ.
+    # Return it so the calling script can use it immediately.
+    return os.environ.get(primary_key_name)
