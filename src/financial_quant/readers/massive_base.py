@@ -1,47 +1,30 @@
-import os
+iimport os
 import sys
-import json
 import time
-from massive import RESTClient
-
-# NEW: Import the security functions directly from your own package!
-from financial_quant.security.credentials import secure_key_setup
-
+import json
+from polygon import RESTClient # Assuming this is what MASSIVE uses
+from financial_quant.security.credentials import scavenge_api_key
+from financial_quant.utils.cache import setup_cache_dir
 
 class MassiveBase:
     def __init__(self, api_key: str = None, key_name: str = "massive_key", calls_per_minute: int = 4):
         """
-        Base class that initializes the cache directories and the API client.
-        Relies on `load_key_to_env` to pre-populate os.environ if api_key is not passed.
+        Base class for MASSIVE. Uses shared utilities for setup, but maintains
+        its own strict rate limiter and metadata tracker.
         """
-        # --- CACHE DIRECTORY ROUTING ---
-        if 'google.colab' in sys.modules:
-            from google.colab import drive
-            try:
-                drive.mount('/content/drive')
-                self.cache_dir = '/content/drive/MyDrive/MASSIVE_DATA'
-            except Exception:
-                self.cache_dir = os.path.expanduser("~/massive_data")
-        else:
-            shared_env = os.environ.get("MASSIVE_SHARED_CACHE")
-            self.cache_dir = shared_env if shared_env else os.path.expanduser("./massive_data")
+        # 1. Use shared utility to build cache
+        self.cache_dir = setup_cache_dir(folder_name="MASSIVE_DATA", shared_env_var="MASSIVE_SHARED_CACHE")
 
-        os.makedirs(self.cache_dir, exist_ok=True)
         self.history_file = os.path.join(self.cache_dir, "api_history.json")
         self.metadata_file = os.path.join(self.cache_dir, "cache_metadata.json")
 
-        # --- THE 1-LINE AUTHENTICATION ---
-        self.api_key = api_key
-        
-        # Only query os.environ if key_name actually exists as a string
-        if not self.api_key and key_name:
-            self.api_key = os.environ.get(key_name)
+        # 2. Use shared utility to hunt for the key
+        fallback_names = [key_name, 'MASSIVE', 'massive', 'MASSIVE_KEY', 'massive_key']
+        self.api_key = scavenge_api_key(api_key=api_key, fallback_names=fallback_names)
 
+        # 3. MASSIVE-specific fallback (Hard crash)
         if not self.api_key:
-            fallback=['MASSIVE','massive','MASSIVE_KEY','massive_key','massive']
-            self.api_key=next(filter(None, (os.environ.get(v) for v in fallback)), None)
-            if not self.api_key:
-              raise ValueError(f"Missing Key! Please run load_key_to_env('{key_name}') in the cell above.")
+             raise ValueError(f"Missing Key! Please run secure_key_setup('{key_name}') in the cell above.")
 
         self.client = RESTClient(self.api_key)
         self.calls_per_minute = calls_per_minute
@@ -110,4 +93,3 @@ class MassiveBase:
         meta[cache_id] = {"start_date": start_date, "end_date": end_date}
         with open(self.metadata_file, 'w') as f:
             json.dump(meta, f, indent=2) 
-

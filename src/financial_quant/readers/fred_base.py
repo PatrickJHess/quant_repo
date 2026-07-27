@@ -3,7 +3,7 @@ import time
 import requests
 import getpass
 from financial_quant.security.credentials import scavenge_api_key
-from financial_quant.utils import setup_cache_dir
+from financial_quant.utils.cache import setup_cache_dir
 
 class FredBase:
     def __init__(self, api_key=None, key_name="fred_key"):
