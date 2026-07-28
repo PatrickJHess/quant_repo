@@ -299,29 +299,29 @@ def scavenge_api_key(api_key: str = None, fallback_names: list = None) -> str:
         except ImportError:
             pass
 
-    # 2. Crawl for the specific hidden file and load it into active memory
-    for name in fallback_names:
-        # Match the exact naming convention from secure_key_setup (e.g., ".fred_key")
-        file_path = _find_key_file(f".{name.lower()}") 
-        
-        if file_path:
-            with open(file_path, 'r') as f:
-                # The file just contains the raw key, so we can read it directly
-                # (No need for the KEY=VALUE splitting if secure_key_setup just writes the raw string)
-                potential_key = f.read().strip()
-                if potential_key:
-                    os.environ[name] = potential_key
-
-    # 3. Check OS Environment (which now includes keys loaded from the file above)
+    # 2. Check OS Environment (Hot Memory) FIRST
     for name in fallback_names:
         potential_key = os.environ.get(name)
         if potential_key:
-            print(f"✅ Key loaded from local environment/file ('{name}')")
-            return potential_key    # 4. FALLBACK: Route to the Setup UI
-    primary_key_name = fallback_names[0]
-    print(f"⚠️ Could not find '{primary_key_name}' automatically. Launching setup...")
+            print(f"✅ Key loaded from active session environment ('{name}')")
+            return potential_key
 
-    # Launch master UI wizard
+    # 3. Crawl for the specific hidden file (Cold Storage)
+    for name in fallback_names:
+        target_filename = f".{name.lower()}"
+        file_path = _find_key_file(target_filename) 
+        
+        if file_path:
+            with open(file_path, 'r') as f:
+                potential_key = f.read().strip()
+                if potential_key:
+                    os.environ[name] = potential_key
+                    print(f"✅ Key loaded securely from local vault ('{target_filename}')")
+                    return potential_key
+
+    # 4. Launch master UI wizard
+    primary_key_name = fallback_names[0]
+    print(f"⚠️ Could not find '{primary_key_name}' automatically. Launching setup...")    
     secure_key_setup(primary_key_name)
 
     # After the wizard completes successfully, the key is injected into os.environ.
