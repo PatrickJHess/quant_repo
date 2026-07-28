@@ -9,8 +9,8 @@ def import_financial_quant():
     Auto-installer and updater for the financial_quant package.
     Parses pyproject.toml projects via git+https.
     """
-    # 1. Raw URL pointing to the src/ directory on main branch
-    github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/main/src/financial_quant/__init__.py"
+    # 1. Raw URL pointing to the src/ directory on master branch
+    github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/master/src/financial_quant/__init__.py"
     repo_install_url = "git+https://github.com/PatrickJHess/quant_repo.git"
     
     # 2. Check local version

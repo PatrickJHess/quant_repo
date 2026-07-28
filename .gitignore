@@ -22,7 +22,7 @@ _build/
 # Testing
 .pytest_cache/
 .coverage
-
+.fred
 # Secrets / Credentials
 credentials.json
 client_secrets.json
