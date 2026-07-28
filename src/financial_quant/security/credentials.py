@@ -1,7 +1,25 @@
 import os
 import sys
 import getpass
-import keyring
+
+
+def _find_key_file(filename: str = ".env") -> str:
+    """
+    Crawls UP the directory tree from the current working directory.
+    Returns the absolute path to the file if found, otherwise returns None.
+    """
+    current_dir = os.path.abspath(os.getcwd())
+    
+    while True:
+        potential_path = os.path.join(current_dir, filename)
+        if os.path.exists(potential_path):
+            return potential_path
+        
+        parent_dir = os.path.dirname(current_dir)
+        if current_dir == parent_dir:  # Hit the root drive
+            return None 
+            
+        current_dir = parent_dir
 
 def secure_key_setup(key_name="FRED_KEY"):
     """
@@ -175,28 +193,10 @@ def secure_key_setup(key_name="FRED_KEY"):
         # 1. Define what we are looking for
         filename = f".{key_name.lower()}"
         
-        # 2. Start at the current working directory
-        current_dir = os.path.abspath(os.getcwd())
-        found_file_path = None
+        # 2. Crawl UP the folder structure using the shared helper
+        found_file_path = _find_key_file(filename)
 
-        # 3. Crawl UP the folder structure
-        while True:
-            potential_path = os.path.join(current_dir, filename)
-            
-            if os.path.exists(potential_path):
-                found_file_path = potential_path
-                break  # We found it! Stop searching.
-                
-            # Move up one level
-            parent_dir = os.path.dirname(current_dir)
-            
-            # Check if we hit the root of the hard drive (e.g., C:\ or /)
-            if current_dir == parent_dir:
-                break  # Stop searching, it doesn't exist anywhere above us
-                
-            current_dir = parent_dir
-
-        # 4. Set the final target_file path
+        # 3. Set the final target_file path
         if found_file_path:
             target_file = found_file_path # Use the file we found up the tree
         else:
@@ -299,33 +299,29 @@ def scavenge_api_key(api_key: str = None, fallback_names: list = None) -> str:
         except ImportError:
             pass
 
-    # 2. Check OS Environment
+    # 2. Crawl for the specific hidden file and load it into active memory
+    for name in fallback_names:
+        # Match the exact naming convention from secure_key_setup (e.g., ".fred_key")
+        file_path = _find_key_file(f".{name.lower()}") 
+        
+        if file_path:
+            with open(file_path, 'r') as f:
+                # The file just contains the raw key, so we can read it directly
+                # (No need for the KEY=VALUE splitting if secure_key_setup just writes the raw string)
+                potential_key = f.read().strip()
+                if potential_key:
+                    os.environ[name] = potential_key
+
+    # 3. Check OS Environment (which now includes keys loaded from the file above)
     for name in fallback_names:
         potential_key = os.environ.get(name)
         if potential_key:
-            print(f"✅ Key loaded from local environment ('{name}')")
-            return potential_key
-    
-    # 3. Check Secure Vault (Cold Storage)
-    # This prevents the UI from triggering if a key is already saved on the machine
-    for name in fallback_names:
-        try:
-            # Note: "system" is the default namespace. If secure_key_setup saves the key 
-            # under a specific app name (e.g., "financial_quant"), change "system" to that string.
-            potential_key = keyring.get_password("system", name)
-            if potential_key:
-                print(f"✅ Key loaded silently from secure vault ('{name}')")
-                
-                # Inject it into hot memory so the rest of the script/session can use it
-                os.environ[name] = potential_key 
-                return potential_key
-        except Exception:
-            continue
-    # 4. FALLBACK: Route to the Setup UI
+            print(f"✅ Key loaded from local environment/file ('{name}')")
+            return potential_key    # 4. FALLBACK: Route to the Setup UI
     primary_key_name = fallback_names[0]
     print(f"⚠️ Could not find '{primary_key_name}' automatically. Launching setup...")
 
-    # Launch your master UI wizard
+    # Launch master UI wizard
     secure_key_setup(primary_key_name)
 
     # After the wizard completes successfully, the key is injected into os.environ.
