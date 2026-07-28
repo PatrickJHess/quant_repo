@@ -1,7 +1,7 @@
 import os
 import sys
 import getpass
-
+import keyring
 
 def secure_key_setup(key_name="FRED_KEY"):
     """
@@ -305,8 +305,23 @@ def scavenge_api_key(api_key: str = None, fallback_names: list = None) -> str:
         if potential_key:
             print(f"✅ Key loaded from local environment ('{name}')")
             return potential_key
-
-    # 3. FALLBACK: Route to the Setup UI
+    
+    # 3. Check Secure Vault (Cold Storage)
+    # This prevents the UI from triggering if a key is already saved on the machine
+    for name in fallback_names:
+        try:
+            # Note: "system" is the default namespace. If secure_key_setup saves the key 
+            # under a specific app name (e.g., "financial_quant"), change "system" to that string.
+            potential_key = keyring.get_password("system", name)
+            if potential_key:
+                print(f"✅ Key loaded silently from secure vault ('{name}')")
+                
+                # Inject it into hot memory so the rest of the script/session can use it
+                os.environ[name] = potential_key 
+                return potential_key
+        except Exception:
+            continue
+    # 4. FALLBACK: Route to the Setup UI
     primary_key_name = fallback_names[0]
     print(f"⚠️ Could not find '{primary_key_name}' automatically. Launching setup...")
 

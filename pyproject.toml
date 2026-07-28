@@ -22,6 +22,7 @@ dependencies = [
     "matplotlib",
     "holidays",
     "pathvalidate",
+    "keyring",
     
     # Advanced Math & Stats
     "scipy",
