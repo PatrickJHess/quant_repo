@@ -1,4 +1,4 @@
-import os
+iimport os
 import sys
 import urllib.request
 import re
@@ -10,7 +10,7 @@ def import_financial_quant():
     Auto-installer and updater for the financial_quant package.
     Context-aware: Skips version checks in cloud environments, 
     but prevents redundant installs if already in hot memory.
-    Safely purges all submodules during an update to prevent stale memory.
+    Safely purges all submodules during a local update to prevent stale memory.
     """
     repo_install_url = "git+https://github.com/PatrickJHess/quant_repo.git"
     github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/master/src/financial_quant/__init__.py"
@@ -69,24 +69,24 @@ def import_financial_quant():
         ])
         print("✅ Update complete!")
         
-        # --- THE NEW ADDITION: Recursive Memory Wipe ---
-        # Find the main package and all nested submodules currently in memory
+        # Recursive Memory Wipe
         modules_to_delete = [
             name for name in sys.modules 
             if name == "financial_quant" or name.startswith("financial_quant.")
         ]
         
-        # Delete every single one of them
         for name in modules_to_delete:
             del sys.modules[name]
             
-        # Force Python to re-scan the file system directories
         importlib.invalidate_caches()
-        # -----------------------------------------------
+        
+        # Dynamic Warning for Local Users
+        print("😕 Note: If newly updated charts or models don't look right, please Restart the Kernel.")
+        print("*(Go to `Kernel` ➡️ `Restart Kernel and Run up to Selected Cell...`)*")
         
     else:
         print(f"✅ 'financial_quant' is up to date (Version {local_version}).")
 
-    # Import and return for local users (will pull fresh files if we just deleted them!)
+    # Import and return for local users 
     import financial_quant as fq
     return fq
