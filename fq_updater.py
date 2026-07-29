@@ -10,6 +10,7 @@ def import_financial_quant():
     Auto-installer and updater for the financial_quant package.
     Context-aware: Skips version checks in cloud environments, 
     but prevents redundant installs if already in hot memory.
+    Safely purges all submodules during an update to prevent stale memory.
     """
     repo_install_url = "git+https://github.com/PatrickJHess/quant_repo.git"
     github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/master/src/financial_quant/__init__.py"
@@ -68,14 +69,24 @@ def import_financial_quant():
         ])
         print("✅ Update complete!")
         
-        # Clear out Jupyter's cached import memory
-        if "financial_quant" in sys.modules:
-            del sys.modules["financial_quant"]
+        # --- THE NEW ADDITION: Recursive Memory Wipe ---
+        # Find the main package and all nested submodules currently in memory
+        modules_to_delete = [
+            name for name in sys.modules 
+            if name == "financial_quant" or name.startswith("financial_quant.")
+        ]
+        
+        # Delete every single one of them
+        for name in modules_to_delete:
+            del sys.modules[name]
+            
+        # Force Python to re-scan the file system directories
         importlib.invalidate_caches()
+        # -----------------------------------------------
         
     else:
         print(f"✅ 'financial_quant' is up to date (Version {local_version}).")
 
-    # Import and return for local users
+    # Import and return for local users (will pull fresh files if we just deleted them!)
     import financial_quant as fq
     return fq
