@@ -1,26 +1,48 @@
+import os
 import sys
-import subprocess
 import urllib.request
 import re
+import subprocess
 import importlib
 
 def import_financial_quant():
     """
     Auto-installer and updater for the financial_quant package.
-    Parses pyproject.toml projects via git+https.
+    Context-aware: Skips version checks in cloud environments, 
+    but prevents redundant installs if already in hot memory.
     """
-    # 1. Raw URL pointing to the src/ directory on master branch
-    github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/master/src/financial_quant/__init__.py"
     repo_install_url = "git+https://github.com/PatrickJHess/quant_repo.git"
+    github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/master/src/financial_quant/__init__.py"
     
-    # 2. Check local version
+    # 1. Environment Detection & Early Stop
+    is_colab = 'google.colab' in sys.modules
+    is_binder = 'BINDER_PORT' in os.environ
+
+    if is_colab or is_binder:
+        # Check hot memory to prevent double-installs in the same session
+        try:
+            import financial_quant as fq
+            print("✅ 'financial_quant' is already loaded in this session.")
+            return fq
+        except ImportError:
+            print("☁️ Cloud environment detected. Installing fresh from GitHub...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", repo_install_url])
+            print("✅ Installation complete!")
+            import financial_quant as fq
+            return fq  # STOP HERE for cloud users
+
+    # =========================================================
+    # 2. Local Environment Logic (Only runs if NOT in the cloud)
+    # =========================================================
+    
+    # Check local version
     try:
         import financial_quant
         local_version = getattr(financial_quant, "__version__", "Unknown")
     except ImportError:
         local_version = "Not Installed"
 
-    # 3. Fetch remote version from GitHub
+    # Fetch remote version from GitHub
     try:
         req = urllib.request.Request(github_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
@@ -31,9 +53,9 @@ def import_financial_quant():
         print(f"⚠️ Could not connect to GitHub to check for updates: {e}")
         remote_version = "Unknown"
 
-    # 4. Decision Tree: Install, Update, or Skip
+    # Decision Tree: Install, Update, or Skip
     if local_version == "Not Installed":
-        print("📦 'financial_quant' not found. Installing from GitHub...")
+        print("📦 'financial_quant' not found locally. Installing from GitHub...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", repo_install_url])
         print("✅ Installation complete!")
         
@@ -54,6 +76,6 @@ def import_financial_quant():
     else:
         print(f"✅ 'financial_quant' is up to date (Version {local_version}).")
 
-    # 5. Import and return
+    # Import and return for local users
     import financial_quant as fq
     return fq
