@@ -170,38 +170,40 @@ def secure_key_setup(key_name="FRED_KEY"):
                 clear_output()
                 print("\n\u26A0\uFE0F Setup cancelled by user (KeyboardInterrupt).")
                 raise StopExecution
-    else:
+else:
         # --- JUPYTER / BINDER LOGIC ---
-        # 1. Define what we are looking for
         filename = f".{key_name.lower()}"
         
-        # 2. Start at the current working directory
+        # Search for an existing file locally and in the Home directory
         current_dir = os.path.abspath(os.getcwd())
         found_file_path = None
-
-        # 3. Crawl UP the folder structure
+        
+        # Check Local Tree First
         while True:
             potential_path = os.path.join(current_dir, filename)
-            
             if os.path.exists(potential_path):
                 found_file_path = potential_path
-                break  # We found it! Stop searching.
-                
-            # Move up one level
+                break 
             parent_dir = os.path.dirname(current_dir)
-            
-            # Check if we hit the root of the hard drive (e.g., C:\ or /)
             if current_dir == parent_dir:
-                break  # Stop searching, it doesn't exist anywhere above us
-                
+                break 
             current_dir = parent_dir
+            
+        # Check Home Directory if not found locally
+        home_dir_path = os.path.join(os.path.expanduser("~"), filename)
+        if not found_file_path and os.path.exists(home_dir_path):
+            found_file_path = home_dir_path
 
         # 4. Set the final target_file path
         if found_file_path:
-            target_file = found_file_path # Use the file we found up the tree
+            target_file = found_file_path # Overwrite existing
         else:
-            target_file = os.path.join(os.getcwd(), filename) # Default to saving in cur
+            # DEFAULT TO GLOBAL HOME DIRECTORY FOR NEW KEYS
+            target_file = home_dir_path 
 
+        # UI: Warning if existing file found (Local only)
+        if not in_binder and os.path.exists(target_file):
+            # ... (Keep your existing overwrite warning logic here) ...
         # UI: Warning if existing file found (Local only)
         if not in_binder and os.path.exists(target_file):
             display(HTML(f"""<div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 6px solid #ffc107; font-family: sans-serif; max-width: 600px; margin-bottom: 10px;"><h4 style="margin-top: 0; color: #856404; margin-bottom: 5px;">&#9888;&#65039; WARNING: Key Already Exists</h4><p style="margin-top: 5px; color: #856404; margin-bottom: 0;">A saved key was already found in your vault.</p></div>"""))
@@ -275,6 +277,7 @@ def load_key_to_env(key_name="FRED_KEY"):
     """
     Silently loads the API key. If it fails, acts as a router to the Setup UI.
     """
+    import os, sys
     if os.environ.get(key_name): return
 
     in_colab = 'google.colab' in sys.modules
@@ -287,9 +290,32 @@ def load_key_to_env(key_name="FRED_KEY"):
                 return
         except: pass 
 
-    dot_file = f".{key_name.lower()}"
-    if os.path.exists(dot_file):
-        with open(dot_file, "r") as f:
+    filename = f".{key_name.lower()}"
+    
+    # 1. Search up the directory tree
+    current_dir = os.path.abspath(os.getcwd())
+    found_key = None
+    
+    while True:
+        potential_path = os.path.join(current_dir, filename)
+        if os.path.exists(potential_path):
+            found_key = potential_path
+            break
+            
+        parent_dir = os.path.dirname(current_dir)
+        if current_dir == parent_dir:
+            break
+        current_dir = parent_dir
+        
+    # 2. Fallback to the User's Home Directory (~/)
+    if not found_key:
+        home_path = os.path.join(os.path.expanduser("~"), filename)
+        if os.path.exists(home_path):
+            found_key = home_path
+
+    # 3. Load if found
+    if found_key:
+        with open(found_key, "r") as f:
             saved_key = f.read().strip()
             if saved_key:
                 os.environ[key_name] = saved_key
@@ -301,7 +327,6 @@ def load_key_to_env(key_name="FRED_KEY"):
     # The Colab Trap
     if in_colab:
         raise RuntimeError(f"[\u26A0\uFE0F] Setup required! Please complete the wizard above, then re-run this cell.")
-
 
 
 def get_api_key(api_key: str = None, key_name: str = "API_KEY", fallback_names: list = None) -> str:
