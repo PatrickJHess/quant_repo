@@ -3,7 +3,7 @@ import time
 import requests
 import getpass
 from financial_quant.security.credentials import scavenge_api_key
-from financial_quant.utils.cache import setup_cache_dir
+from financial_quant.utils.cache import setup_cache_dir, cache_clear
 
 class FredBase:
     def __init__(self, api_key=None, key_name="fred_key"):
@@ -23,6 +23,17 @@ class FredBase:
             # If we get here, it means the user cancelled the secure_key_setup wizard.
             print("⚠️ No key loaded. Defaulting to pandas_datareader for basic series.")
 
+    # Managing existing cache   
+    def clear_cache(self, symbol):
+        """
+        Clears the cached economic data for a specific FRED series ID.
+        Requires an explicit series ID and user confirmation for safety.
+        
+        Examples:
+        - fred_data.clear_cache('GDP')     -> Clears all cached data for Gross Domestic Product
+        - fred_data.clear_cache('UNRATE')  -> Clears all cached data for the Unemployment Rate
+        """
+        cache_clear(self.cache_dir, symbol=symbol)
     # --- REACTIVE NETWORK SHIELD ---
     def _make_api_request(self, url, max_retries=3, series_id=None):
         """Universal helper to handle API calls, 429 Too Many Requests, and graceful 400 errors."""

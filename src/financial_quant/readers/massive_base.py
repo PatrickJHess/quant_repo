@@ -4,7 +4,7 @@ import time
 import json
 from massive import RESTClient # Assuming this is what MASSIVE uses
 from financial_quant.security.credentials import scavenge_api_key
-from financial_quant.utils.cache import setup_cache_dir
+from financial_quant.utils.cache import setup_cache_dir, clear_cache
 
 class MassiveBase:
     def __init__(self, api_key: str = None, key_name: str = "massive_key", calls_per_minute: int = 4):
@@ -28,6 +28,18 @@ class MassiveBase:
 
         self.client = RESTClient(self.api_key)
         self.calls_per_minute = calls_per_minute
+
+    # Managing existing cache 
+    def clear_cache(self, symbol):
+        """
+        Clears the cached market data for a specific contract or ticker.
+        Requires an explicit symbol and user confirmation for safety.
+        
+        Examples:
+        - massive_data.clear_cache('ESU6')        -> Clears all timeframes for the ESU6 contract
+        - massive_data.clear_cache('ESU6_1_day')  -> Clears ONLY the daily data for ESU6
+        """
+        cache_clear(self.cache_dir, symbol=symbol)
 
     # --- 3. PERSISTENT FREEMIUM TRACKER ---
     def _enforce_speed_limit(self):
