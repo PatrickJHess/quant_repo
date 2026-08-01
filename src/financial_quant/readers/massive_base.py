@@ -4,7 +4,7 @@ import time
 import json
 from massive import RESTClient # Assuming this is what MASSIVE uses
 from financial_quant.security.credentials import scavenge_api_key
-from financial_quant.utils.cache import setup_cache_dir, clear_cache
+from financial_quant.utils.cache import setup_cache_dir, cache_clear
 
 class MassiveBase:
     def __init__(self, api_key: str = None, key_name: str = "massive_key", calls_per_minute: int = 4):

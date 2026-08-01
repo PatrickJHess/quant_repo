@@ -36,7 +36,7 @@ def setup_cache_dir(folder_name: str, shared_env_var: str = None) -> str:
     print(f"📂 Cache anchored at: {cache_dir}")
     return cache_dir
 
-def clear_cache(cache_dir, symbol=None):
+def cache_clear(cache_dir, symbol=None):
     """
     Clears the cache data inside the specified directory.
     If a symbol is provided, clears only files matching that symbol.
