@@ -6,4 +6,4 @@ from .readers.fred_reader import FredReader
 from .readers.massive_reader import MASSIVEReader
 from .readers.FEDINVEST import FEDInvest,clean_FEDInvest
 from .security.credentials import secure_key_setup
-__version__='1.0.4'
+__version__='1.0.5'
