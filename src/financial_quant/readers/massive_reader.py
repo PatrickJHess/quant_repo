@@ -1,8 +1,7 @@
 import os
-import sys
+import time
 import json
 import requests
-import time
 import pandas as pd
 from .massive_base import MassiveBase
 
@@ -14,71 +13,90 @@ class MASSIVEReader(MassiveBase):
 
     def _execute_with_cache(self, fetch_callback, ticker, start_date, end_date, resolution):
         """
-        Universal caching engine.
-        Inherits _check_cache_metadata and _update_cache_metadata from MassiveBase.
-        Takes a 'fetch_callback' function to run the actual API call if cache misses.
+        Universal caching engine driven directly by the CSV file contents.
+        Loads existing data first, checks the date index, and dynamically fetches
+        only the missing blocks before or after the cached range.
         """
         safe_ticker = ticker.replace(":", "_")
-        cache_id = f"{safe_ticker}_{resolution}"
-        filename = f"{cache_id}_data.csv"
-        filepath = os.path.join(self.cache_dir, filename)
+        filepath = os.path.join(self.cache_dir, f"{safe_ticker}_{resolution}_data.csv")
 
-        # 1. METADATA VALIDATION CHECK (CACHE HIT)
-        if os.path.exists(filepath) and self._check_cache_metadata(cache_id, start_date, end_date):
-            print(f"✅ Loaded {ticker} ({resolution}) from local metadata-verified cache.")
+        # 1. LOAD THE EXISTING CACHE (The Single Source of Truth)
+        if os.path.exists(filepath):
+            try:
+                df = pd.read_csv(filepath, index_col=0)
+                df.index = pd.to_datetime(df.index, errors='coerce', utc=True)
+                df = df[df.index.notnull()]
+                if getattr(df.index, 'tz', None) is not None:
+                    df.index = df.index.tz_localize(None)
+                df = df.sort_index()
+            except Exception:
+                # If the CSV is corrupt, pretend it doesn't exist to force a fresh pull
+                df = pd.DataFrame()
+        else:
+            df = pd.DataFrame()
 
-            df = pd.read_csv(filepath, index_col=0)
-            df.index = pd.to_datetime(df.index, errors='coerce',utc=True)
-        # Drop unparseable rows
-            df = df[df.index.notnull()]
-            # Strip timezone if present
-            if getattr(df.index, 'tz', None) is not None:
-                df.index = df.index.tz_localize(None)
+        # 2. CALCULATE MISSING DELTAS
+        fetch_ranges = []
+        
+        if df.empty:
+            # We have nothing; fetch the whole requested window
+            fetch_ranges.append((start_date, end_date))
+        else:
+            cache_start = df.index.min().strftime('%Y-%m-%d')
+            cache_end = df.index.max().strftime('%Y-%m-%d')
+            
+            # Check for missing data BEFORE our cache
+            if start_date < cache_start:
+                fetch_ranges.append((start_date, cache_start))
+            
+            # Check for missing data AFTER our cache
+            if end_date > cache_end:
+                fetch_ranges.append((cache_end, end_date))
 
-            df = df.sort_index()
+        # 3. IF NO DELTAS, WE HAVE A FULL CACHE HIT
+        if not fetch_ranges:
+            print(f"✅ Loaded {ticker} ({resolution}) directly from CSV cache.")
             return df.loc[start_date:end_date]
 
-        # 2. CACHE MISS - FETCH FROM API
-        print(f"☁️ Downloading {ticker} ({resolution}) via API...")
-        self._enforce_speed_limit()
+        # 4. FETCH ONLY THE MISSING PIECES
+        df_list = [df] if not df.empty else []
+        
+        for f_start, f_end in fetch_ranges:
+            print(f"☁️ Downloading {ticker} ({resolution}) via API from {f_start} to {f_end}...")
+            self._enforce_speed_limit()
 
-        try:
-            df = fetch_callback()
-
-            if df is None or df.empty:
-                print(f"⚠️ Cache exist, but no new data for {ticker}.")
-                print(f"❗🧐 Make sure you used the correct method.")
-                return None
-
-            # If an older slice already existed, merge them together cleanly
-            if os.path.exists(filepath):
-                old_df = pd.read_csv(filepath, index_col=0)
-                old_df.index = pd.to_datetime(old_df.index, errors='coerce',utc=True)
-                
-                if getattr(old_df.index, 'tz', None) is not None:
-                    old_df.index = old_df.index.tz_localize(None)
+            try:
+                new_data = fetch_callback(f_start, f_end)
+                if new_data is not None and not new_data.empty:
+                    df_list.append(new_data)
                     
-                df = pd.concat([old_df, df]).drop_duplicates().sort_index()
+            except Exception as e:
+                if "429" in str(e):
+                    print(f"\n🚨 SDK Server Crash! The API forcefully rejected {ticker}.")
+                    print("😴 Forcing a hard 65-second server-reset penalty...")
+                    time.sleep(65)
+                    print(f"🔄 Attempting {ticker} one final time...")
+                    return self._execute_with_cache(fetch_callback, ticker, start_date, end_date, resolution)
+                else:
+                    print(f"❌ Connection or Parsing error: {e}")
+                    return None
 
-            # Save data and update global metadata manifest tracking
-            df.to_csv(filepath)
+        # 5. MERGE, CLEAN, AND SAVE
+        if len(df_list) == (1 if not df.empty else 0):
+            print(f"⚠️ API returned no new data for requested ranges.")
+            return df.loc[start_date:end_date] if not df.empty else None
 
-            self._update_cache_metadata(cache_id, start_date, end_date)
-            print(f"💾 Saved {ticker} data and metadata to cache.")
+        combined_df = pd.concat(df_list).drop_duplicates().sort_index()
+        
+        # Clean up any duplicated dates safely before saving (overwriting old data with new)
+        combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+        combined_df.to_csv(filepath)
 
-            df = df.sort_index()
-            return df.loc[start_date:end_date]
+        true_start = combined_df.index.min().strftime('%Y-%m-%d')
+        true_end = combined_df.index.max().strftime('%Y-%m-%d')
+        print(f"💾 Merged and saved {ticker} to cache. (Total Coverage: {true_start} to {true_end})")
 
-        except Exception as e:
-            if "429" in str(e):
-                print(f"\n🚨 SDK Server Crash! The API forcefully rejected {ticker}.")
-                print("😴 Forcing a hard 65-second server-reset penalty...")
-                time.sleep(65)
-                print(f"🔄 Attempting {ticker} one final time...")
-                return self._execute_with_cache(fetch_callback, ticker, start_date, end_date, resolution)
-            else:
-                print(f"❌ Connection or Parsing error: {e}")
-                return None
+        return combined_df.loc[start_date:end_date]
 
     # =========================================================================
     # STOCKS & EQUITIES PROVIDER METHODS
@@ -86,14 +104,14 @@ class MASSIVEReader(MassiveBase):
     def get_stock_data(self, ticker: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
         print(f"📈 Fetching stock data for {ticker} ({multiplier} {timespan})...")
 
-        def _fetch():
+        def _fetch(f_start, f_end):
             aggs = self.client.get_aggs(
                 ticker=ticker,
                 multiplier=multiplier,
                 timespan=timespan,
                 limit=50000,
-                from_=start_date,
-                to=end_date
+                from_=f_start,
+                to=f_end
             )
             df = pd.DataFrame(aggs)
             if not df.empty:
@@ -118,7 +136,7 @@ class MASSIVEReader(MassiveBase):
     def get_dividend_data(self, ticker: str, start_date: str = "1970-01-01", end_date: str = "2099-12-31") -> pd.DataFrame:
         print(f"💰 Fetching dividend data for {ticker}...")
 
-        def _fetch():
+        def _fetch(f_start, f_end):
             url = "https://api.massive.com/stocks/v1/dividends"
             params = {
                 "ticker": ticker,
@@ -155,7 +173,7 @@ class MASSIVEReader(MassiveBase):
     def get_futures_data(self, contract_symbol: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
         print(f"🚀 Fetching futures data for {contract_symbol} ({multiplier} {timespan})...")
 
-        def _fetch():
+        def _fetch(f_start, f_end):
             url = f"https://api.massive.com/futures/v1/aggs/{contract_symbol}"
 
             massive_timespan = timespan.lower()
@@ -168,8 +186,8 @@ class MASSIVEReader(MassiveBase):
 
             params = {
                 "resolution": resolution_string,
-                "window_start.gte": start_date,
-                "window_start.lte": end_date,
+                "window_start.gte": f_start,
+                "window_start.lte": f_end,
                 "limit": 50000,
                 "sort": "window_start.asc",
                 "apiKey": self.api_key
