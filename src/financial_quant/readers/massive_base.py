@@ -30,7 +30,7 @@ class MassiveBase:
         self.calls_per_minute = calls_per_minute
 
     # Managing existing cache 
-    def clear_cache(self, symbol):
+    def clear_cache(self, symbol=' '):
         """
         Clears the cached market data for a specific contract or ticker.
         Requires an explicit symbol and user confirmation for safety.
