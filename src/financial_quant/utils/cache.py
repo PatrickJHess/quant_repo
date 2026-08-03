@@ -62,7 +62,6 @@ def cache_inventory(cache_dir: str):
     return files
 
 
-
 def cache_clear(cache_dir: str, symbol: str = None, force: bool = False):
     """
     Clears the cache data inside the specified directory.
@@ -80,7 +79,8 @@ def cache_clear(cache_dir: str, symbol: str = None, force: bool = False):
         if not files_to_remove:
             print(f"ℹ️ No cached files found for symbol: '{symbol}'")
             print("---")
-            cache_inventory(cache_dir) # Assumes cache_inventory is defined
+            # Modified: Now passes the symbol into cache_inventory to show relevant .csv files
+            cache_inventory(cache_dir, symbol) 
             return
 
         selected_files = files_to_remove
