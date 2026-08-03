@@ -36,38 +36,6 @@ def setup_cache_dir(folder_name: str, shared_env_var: str = None) -> str:
     print(f"📂 Cache anchored at: {cache_dir}")
     return cache_dir
 
-def cache_clear(cache_dir, symbol=None):
-    """
-    Clears the cache data inside the specified directory.
-    If a symbol is provided, clears only files matching that symbol.
-    """
-    if symbol:
-        search_pattern = os.path.join(cache_dir, f"*{symbol}*")
-        files_to_remove = glob.glob(search_pattern)
-        
-        if not files_to_remove:
-            print(f"ℹ️ No cached files found for symbol: {symbol}")
-            return
-
-        for file_path in files_to_remove:
-            try:
-                os.remove(file_path)
-                print(f"🗑️ Cleared specific cache file: {file_path}")
-            except Exception as e:
-                print(f"⚠️ Error removing {file_path}: {e}")
-    else:
-        # Clear the entire cache directory
-        for filename in os.listdir(cache_dir):
-            file_path = os.path.join(cache_dir, filename)
-            try:
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
-            except Exception as e:
-                print(f"⚠️ Error removing {file_path}: {e}")
-        
-        print(f"🧹 Entire cache cleared successfully from {cache_dir}.")
 
 def cache_inventory(cache_dir: str):
     """
@@ -94,9 +62,6 @@ def cache_inventory(cache_dir: str):
     return files
 
 
-import os
-import glob
-import shutil
 
 def cache_clear(cache_dir: str, symbol: str = None, force: bool = False):
     """
