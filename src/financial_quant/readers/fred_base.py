@@ -24,7 +24,7 @@ class FredBase:
             print("⚠️ No key loaded. Defaulting to pandas_datareader for basic series.")
 
     # Managing existing cache   
-    def clear_cache(self, symbol):
+    def clear_cache(self, symbol=''):
         """
         Clears the cached economic data for a specific FRED series ID.
         Requires an explicit series ID and user confirmation for safety.
