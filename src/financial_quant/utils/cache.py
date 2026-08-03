@@ -37,22 +37,28 @@ def setup_cache_dir(folder_name: str, shared_env_var: str = None) -> str:
     return cache_dir
 
 
-def cache_inventory(cache_dir: str):
+def cache_inventory(cache_dir: str, symbol: str = ''):
     """
-    Scans the cache directory and prints a helpful inventory of available symbols 
-    and their associated files.
+    Scans the cache directory and prints a helpful inventory of available files.
+    Only inventories files with a .csv suffix that start with the provided symbol.
     """
     if not os.path.exists(cache_dir):
         print(f"ℹ️ Cache directory does not exist: {cache_dir}")
         return []
 
-    files = [f for f in os.listdir(cache_dir) if os.path.isfile(os.path.join(cache_dir, f))]
+    # Modified: filter for .csv files AND files that start with the symbol string
+    files = [
+        f for f in os.listdir(cache_dir) 
+        if os.path.isfile(os.path.join(cache_dir, f)) 
+        and f.endswith('.csv') 
+        and f.startswith(symbol)
+    ]
     
     if not files:
-        print("📂 The cache directory is currently empty.")
+        print("📂 The cache directory is currently empty or no files match your criteria.")
         return []
 
-    print(f"📂 Found {len(files)} files in cache:")
+    print(f"📂 Found {len(files)} matching .csv files in cache:")
     for f in files[:15]:  # Limit output to prevent console spam
         print(f"  - {f}")
     
