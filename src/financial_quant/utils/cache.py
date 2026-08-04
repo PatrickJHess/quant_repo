@@ -125,13 +125,13 @@ def cache_clear(cache_dir: str, symbol: str = None, force: bool = False):
 
         # Step 2: Final strict confirmation (for both single and multiple files)
         if not force:
-            print("\n⚠️ You are about to delete the following file(s):")
+            print("\n🚨 You are about to delete the following file(s):")
             for f in selected_files:
                 print(f"  - {os.path.basename(f)}")
             
             confirm = input("\nType 'yes' to confirm (press Enter or anything else to cancel): ").strip().lower()
             if confirm != 'yes':
-                print("🚫 Operation cancelled. The cache was not modified.")
+                print("🛑 Operation cancelled. The cache was not modified.")
                 return
 
         # Step 3: Execute the deletion
@@ -145,12 +145,12 @@ def cache_clear(cache_dir: str, symbol: str = None, force: bool = False):
     else:
         # Warning and Confirmation for clearing the ENTIRE cache
         if not force:
-            print(f"⚠️ WARNING: You are about to delete ALL cached data in:")
+            print(f"🚨🚨 WARNING: You are about to delete ALL cached data in:")
             print(f"   {cache_dir}")
             confirm = input("Type 'yes' to proceed (press Enter or anything else to cancel): ").strip().lower()
             
             if confirm != 'yes':
-                print("🚫 Operation cancelled. The cache was not modified.")
+                print("🛑 Operation cancelled. The cache was not modified.")
                 return
 
         deleted_count = 0

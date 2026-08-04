@@ -36,38 +36,49 @@ def import_financial_quant():
     # 2. Local Environment Logic (Only runs if NOT in the cloud)
     # =========================================================
     
-    # Check local version
+# 1. Check local version
     try:
         import financial_quant
         local_version = getattr(financial_quant, "__version__", "Unknown")
     except ImportError:
         local_version = "Not Installed"
-
-    # Fetch remote version from GitHub
-    try:
-        req = urllib.request.Request(github_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            remote_code = response.read().decode('utf-8')
-        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', remote_code)
-        remote_version = match.group(1) if match else "Unknown"
     except Exception as e:
-        print(f"⚠️ Could not connect to GitHub to check for updates: {e}")
-        remote_version = "Unknown"
+        # Catches IndentationError, SyntaxError, etc. from a broken local install
+        print(f"⚠️ Local installation is broken ({type(e).__name__}).")
+        local_version = "Broken"
 
-    # Decision Tree: Install, Update, or Skip
+    # 2. Fetch remote version ONLY if local is intact
+    remote_version = "Unknown"
+    if local_version not in ["Not Installed", "Broken"]:
+        try:
+            req = urllib.request.Request(github_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                remote_code = response.read().decode('utf-8')
+            match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', remote_code)
+            remote_version = match.group(1) if match else "Unknown"
+        except Exception as e:
+            print(f"⚠️ Could not connect to GitHub to check for updates: {e}")
+
+    # 3. Decision Tree: Install, Fix, Update, or Skip
     if local_version == "Not Installed":
         print("📦 'financial_quant' not found locally. Installing from GitHub...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", repo_install_url])
         print("✅ Installation complete!")
         
-    elif local_version != remote_version and remote_version != "Unknown":
-        print(f"⚠️ Update found! (Local: {local_version} ➡️ Latest: {remote_version})")
-        print("🔄 Automatically updating financial_quant. Please wait...")
+    elif local_version == "Broken" or (local_version != remote_version and remote_version != "Unknown"):
+        # Custom messaging based on the trigger
+        if local_version == "Broken":
+            print("🛠️ Corrupted installation detected. Forcing a fresh reinstall...")
+        else:
+            print(f"⚠️ Update found! (Local: {local_version} ➡️ Latest: {remote_version})")
+            print("🔄 Automatically updating financial_quant. Please wait...")
+            
+        # The core install and memory wipe logic (shared by Broken and Update)
         subprocess.check_call([
             sys.executable, "-m", "pip", "install", "-q", "--upgrade", 
             "--force-reinstall", "--no-cache-dir", repo_install_url
         ])
-        print("✅ Update complete!")
+        print("✅ Process complete!")
         
         # Recursive Memory Wipe
         modules_to_delete = [
