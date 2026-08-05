@@ -35,27 +35,43 @@ class MASSIVEReader(MassiveBase):
         else:
             df = pd.DataFrame()
 
-        # 2. CALCULATE MISSING DELTAS
+# 2. CALCULATE MISSING DELTAS
         fetch_ranges = []
         
         if df.empty:
             # We have nothing; fetch the whole requested window
             fetch_ranges.append((start_date, end_date))
         else:
-            cache_start = df.index.min().strftime('%Y-%m-%d')
-            cache_end = df.index.max().strftime('%Y-%m-%d')
+            # Convert to Pandas datetime objects for date math
+            import pandas as pd
+            req_start = pd.to_datetime(start_date)
+            req_end = pd.to_datetime(end_date)
+            c_start = pd.to_datetime(df.index.min().strftime('%Y-%m-%d'))
+            c_end = pd.to_datetime(df.index.max().strftime('%Y-%m-%d'))
             
             # Check for missing data BEFORE our cache
-            if start_date < cache_start:
-                fetch_ranges.append((start_date, cache_start))
+            if req_start < c_start:
+                # Shift 1 day back to avoid re-downloading c_start
+                fetch_end = (c_start - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                fetch_ranges.append((start_date, fetch_end))
             
             # Check for missing data AFTER our cache
-            if end_date > cache_end:
-                fetch_ranges.append((cache_end, end_date))
+            if req_end > c_end:
+                # Shift 1 day forward to avoid re-downloading c_end
+                fetch_start = (c_end + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                
+                # GUARDRAIL: Only fetch if there is at least one business day in the gap.
+                # This prevents infinite loops when requesting weekends or exclusive end-dates.
+                missing_bdays = len(pd.bdate_range(start=fetch_start, end=end_date))
+                
+                if missing_bdays > 0:
+                    fetch_ranges.append((fetch_start, end_date))
+                else:
+                    print(f"✅ Gap ({fetch_start} to {end_date}) contains no trading days. Skipping API call.")
 
-        # 3. IF NO DELTAS, WE HAVE A FULL CACHE HIT
+      # 3. IF NO DELTAS, WE HAVE A FULL CACHE HIT
         if not fetch_ranges:
-            print(f"✅ Loaded {ticker} ({resolution}) directly from CSV cache.")
+            print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from CSV.")
             return df.loc[start_date:end_date]
 
         # 4. FETCH ONLY THE MISSING PIECES
