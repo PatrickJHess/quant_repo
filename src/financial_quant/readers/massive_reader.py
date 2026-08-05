@@ -19,7 +19,7 @@ class MASSIVEReader(MassiveBase):
         """
         safe_ticker = ticker.replace(":", "_")
         filepath = os.path.join(self.cache_dir, f"{safe_ticker}_{resolution}_data.csv")
-
+        import pandas as pd
         # 1. LOAD THE EXISTING CACHE (The Single Source of Truth)
         if os.path.exists(filepath):
             try:
