@@ -231,9 +231,9 @@ class MASSIVEReader(MassiveBase):
                 df.set_index(time_col, inplace=True)
 
                 if timespan in ['day', 'week', 'month', 'session']:
-                    df.index = pd.to_datetime([
-                       t+pd.Timedelta(days=1) if t.hour >= 16 else t
-                       for t in df.index]).normalize()
+                    # Strip all time and force pure date-level index
+                    df.index = df.index.date
+                    df.index = pd.to_datetime(df.index)
                 else:
                     if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
