@@ -191,19 +191,25 @@ class MASSIVEReader(MassiveBase):
 
         def _fetch(f_start, f_end):
             url = f"https://api.massive.com/futures/v1/aggs/{contract_symbol}"
-
             massive_timespan = timespan.lower()
-            if massive_timespan == "minute":
-                massive_timespan = "min"
-            elif massive_timespan == "day":
+            
+            # 1. Apply start-date shift ONLY to daily/session data
+           is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
                 massive_timespan = "session"
+                api_start = (pd.to_datetime(f_start) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+           else:
+                massive_timespan = "min" if timespan.lower() == "minute" else timespan.lower()
+                # Intraday bars (1_min, 5_min, 60_min) keep exact start boundary
+                api_start = f_start
 
+            # Guaranteed end-date buffer for both resolutions
+            api_end = (pd.to_datetime(f_end) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
             resolution_string = f"{multiplier}{massive_timespan}"
 
             params = {
                 "resolution": resolution_string,
-                "window_start.gte": f_start,
-                "window_start.lte": f_end,
+                "window_start.gte": api_start,
+                "window_start.lte": api_end,
                 "limit": 50000,
                 "sort": "window_start.asc",
                 "apiKey": self.api_key
@@ -216,12 +222,7 @@ class MASSIVEReader(MassiveBase):
             df = pd.DataFrame(data.get("results", []))
 
             if not df.empty:
-                if 'timestamp' in df.columns:
-                    time_col = 'timestamp'
-                elif 'window_start' in df.columns:
-                    time_col = 'window_start'
-                else:
-                    time_col = 't'
+                time_col = 'timestamp' if 'timestamp' in df.columns else ('window_start' if 'window_start' in df.columns else 't')
 
                 try:
                     df[time_col] = pd.to_datetime(df[time_col], unit='ns')
@@ -230,10 +231,12 @@ class MASSIVEReader(MassiveBase):
 
                 df.set_index(time_col, inplace=True)
 
+                # 2. Map evening window_start times (18:00) to the Trade Date ONLY for daily bars
                 if timespan in ['day', 'week', 'month', 'session']:
-                    # Strip all time and force pure date-level index
-                    df.index = df.index.date
-                    df.index = pd.to_datetime(df.index)
+                    df.index = pd.to_datetime([
+                        t + pd.Timedelta(days=1) if t.hour >= 16 else t 
+                        for t in df.index
+                    ]).normalize()
                 else:
                     if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
