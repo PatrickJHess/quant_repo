@@ -194,13 +194,13 @@ class MASSIVEReader(MassiveBase):
             massive_timespan = timespan.lower()
             
             # 1. Apply start-date shift ONLY to daily/session data
-           is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
+            is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
                 massive_timespan = "session"
                 api_start = (pd.to_datetime(f_start) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-           else:
-                massive_timespan = "min" if timespan.lower() == "minute" else timespan.lower()
-                # Intraday bars (1_min, 5_min, 60_min) keep exact start boundary
-                api_start = f_start
+            else:
+                 massive_timespan = "min" if timespan.lower() == "minute" else timespan.lower()
+                 # Intraday bars (1_min, 5_min, 60_min) keep exact start boundary
+                 api_start = f_start
 
             # Guaranteed end-date buffer for both resolutions
             api_end = (pd.to_datetime(f_end) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
