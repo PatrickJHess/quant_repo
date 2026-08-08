@@ -234,10 +234,9 @@ class MASSIVEReader(MassiveBase):
 
                 # 2. Map evening window_start times (18:00) to the Trade Date ONLY for daily bars
                 if timespan in ['day', 'week', 'month', 'session']:
-                    df.index = pd.to_datetime([
-                        t + pd.Timedelta(days=1) if t.hour >= 16 else t 
-                        for t in df.index
-                    ]).normalize()
+                    # Massive API stamps daily futures bars at session open (the evening before).
+                    # Shift all daily/session timestamps forward 1 day to match the Trade Date. 
+                    df.index = (df.index + pd.Timedelta(days=1)).normalize()
                 else:
                     if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
