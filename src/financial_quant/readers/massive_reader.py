@@ -3,13 +3,34 @@ import time
 import json
 import requests
 import pandas as pd
+import pandas_market_calendars as mcal
 from .massive_base import MassiveBase
-
 
 
 class MASSIVEReader(MassiveBase):
     def __init__(self, api_key: str = None, key_name: str = "", calls_per_minute: int = 4):
-        super(MASSIVEReader, self).__init__(api_key=api_key, key_name=key_name, calls_per_minute=calls_per_minute)
+        super().__init__(api_key=api_key, key_name=key_name, calls_per_minute=calls_per_minute)
+        
+        # 📅 Initialize market calendars once for the whole class
+        self.cme_cal = mcal.get_calendar('CME')   # For Futures
+        self.nyse_cal = mcal.get_calendar('NYSE') # For Stocks
+
+    def _align_trade_dates(self, start_date: str, end_date: str, market: str = "CME") -> tuple:
+        """
+        Universal calendar logic to snap weekends and holidays to valid trade dates.
+        Prevents phantom cache misses and needleless API calls.
+        """
+        cal = self.cme_cal if market == "CME" else self.nyse_cal
+        
+        # Snap start date FORWARD to the next valid trading day
+        valid_starts = cal.valid_days(start_date, pd.to_datetime(start_date) + pd.Timedelta(days=15))
+        aligned_start = valid_starts[0].strftime('%Y-%m-%d')
+        
+        # Snap end date BACKWARD to the most recent valid trading day
+        valid_ends = cal.valid_days(pd.to_datetime(end_date) - pd.Timedelta(days=15), end_date)
+        aligned_end = valid_ends[-1].strftime('%Y-%m-%d')
+        
+        return aligned_start, aligned_end
 
     def _execute_with_cache(self, fetch_callback, ticker, start_date, end_date, resolution):
         """
@@ -19,7 +40,7 @@ class MASSIVEReader(MassiveBase):
         """
         safe_ticker = ticker.replace(":", "_")
         filepath = os.path.join(self.cache_dir, f"{safe_ticker}_{resolution}_data.csv")
-        import pandas as pd
+        
         # 1. LOAD THE EXISTING CACHE (The Single Source of Truth)
         if os.path.exists(filepath):
             try:
@@ -35,15 +56,13 @@ class MASSIVEReader(MassiveBase):
         else:
             df = pd.DataFrame()
 
-# 2. CALCULATE MISSING DELTAS
+        # 2. CALCULATE MISSING DELTAS
         fetch_ranges = []
         
         if df.empty:
             # We have nothing; fetch the whole requested window
             fetch_ranges.append((start_date, end_date))
         else:
-            # Convert to Pandas datetime objects for date math
-            import pandas as pd
             req_start = pd.to_datetime(start_date)
             req_end = pd.to_datetime(end_date)
             c_start = pd.to_datetime(df.index.min().strftime('%Y-%m-%d'))
@@ -61,7 +80,6 @@ class MASSIVEReader(MassiveBase):
                 fetch_start = (c_end + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                 
                 # GUARDRAIL: Only fetch if there is at least one business day in the gap.
-                # This prevents infinite loops when requesting weekends or exclusive end-dates.
                 missing_bdays = len(pd.bdate_range(start=fetch_start, end=end_date))
                 
                 if missing_bdays > 0:
@@ -69,7 +87,7 @@ class MASSIVEReader(MassiveBase):
                 else:
                     print(f"✅ Gap ({fetch_start} to {end_date}) contains no trading days. Skipping API call.")
 
-      # 3. IF NO DELTAS, WE HAVE A FULL CACHE HIT
+        # 3. IF NO DELTAS, WE HAVE A FULL CACHE HIT
         if not fetch_ranges:
             print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from CSV.")
             return df.loc[start_date:end_date]
@@ -104,7 +122,7 @@ class MASSIVEReader(MassiveBase):
 
         combined_df = pd.concat(df_list).drop_duplicates().sort_index()
         
-        # Clean up any duplicated dates safely before saving (overwriting old data with new)
+        # Clean up any duplicated dates safely before saving
         combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
         combined_df.to_csv(filepath)
 
@@ -114,10 +132,15 @@ class MASSIVEReader(MassiveBase):
 
         return combined_df.loc[start_date:end_date]
 
+
     # =========================================================================
     # STOCKS & EQUITIES PROVIDER METHODS
     # =========================================================================
     def get_stock_data(self, ticker: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
+        # 🛡️ Clean the dates before anything else!
+        if timespan.lower() in ["day", "daily", "session"]:
+            start_date, end_date = self._align_trade_dates(start_date, end_date, market="NYSE")
+
         print(f"📈 Fetching stock data for {ticker} ({multiplier} {timespan})...")
 
         def _fetch(f_start, f_end):
@@ -145,6 +168,7 @@ class MASSIVEReader(MassiveBase):
             end_date=end_date,
             resolution=resolution_label
         )
+
 
     # =========================================================================
     # DIVIDENDS PROVIDER METHOD
@@ -183,23 +207,25 @@ class MASSIVEReader(MassiveBase):
             resolution="dividends"
         )
 
+
     # =========================================================================
     # FUTURES PROVIDER METHODS
     # =========================================================================
     def get_futures_data(self, contract_symbol: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
+        is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
+        
+        # 🛡️ Clean the dates before anything else!
+        if is_daily_resolution:
+            start_date, end_date = self._align_trade_dates(start_date, end_date, market="CME")
+
         print(f"🚀 Fetching futures data for {contract_symbol} ({multiplier} {timespan})...")
 
         def _fetch(f_start, f_end):
             url = f"https://api.massive.com/futures/v1/aggs/{contract_symbol}"
-            massive_timespan = timespan.lower()
             
             # 1. Apply start-date shift ONLY to daily/session data
-            is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
             if is_daily_resolution:
-                if pd.to_datetime(f_start).weekday() == 6:
-                  f_start = (pd.to_datetime(f_start) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                 massive_timespan = "session"
-                f_start_dt = pd.to_datetime(f_start)
                 api_start = (pd.to_datetime(f_start) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
             else:
                  massive_timespan = "min" if timespan.lower() == "minute" else timespan.lower()
@@ -244,7 +270,8 @@ class MASSIVEReader(MassiveBase):
                     if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
                     df.index = df.index.tz_convert('America/New_York').tz_localize(None)
-            df=df.rename(columns={'ticker':'Symbol'})
+            
+            df = df.rename(columns={'ticker':'Symbol'})
             return df
 
         resolution_label = f"{multiplier}_{timespan}"
