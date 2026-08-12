@@ -197,7 +197,8 @@ class MASSIVEReader(MassiveBase):
             is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
             if is_daily_resolution:
                 massive_timespan = "session"
-                api_start = (pd.to_datetime(f_start) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                shift_days = 0 if f_start_dt.weekday() == 6 else 1
+                api_start = (pd.to_datetime(f_start) - pd.Timedelta(days=shift_days)).strftime('%Y-%m-%d')
             else:
                  massive_timespan = "min" if timespan.lower() == "minute" else timespan.lower()
                  # Intraday bars (1_min, 5_min, 60_min) keep exact start boundary
