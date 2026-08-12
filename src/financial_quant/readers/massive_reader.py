@@ -12,7 +12,7 @@ class MASSIVEReader(MassiveBase):
         super().__init__(api_key=api_key, key_name=key_name, calls_per_minute=calls_per_minute)
         
         # 📅 Initialize market calendars once for the whole class
-        self.cme_cal = mcal.get_calendar('CME')   # For Futures
+        self.cme_cal = mcal.get_calendar('CME_TradeDate')   # For Futures
         self.nyse_cal = mcal.get_calendar('NYSE') # For Stocks
 
     def _align_trade_dates(self, start_date: str, end_date: str, market: str = "CME") -> tuple:
