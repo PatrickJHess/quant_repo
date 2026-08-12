@@ -18,7 +18,7 @@ class MASSIVEReader(MassiveBase):
     def _align_trade_dates(self, start_date: str, end_date: str, market: str = "CME") -> tuple:
         """
         Universal calendar logic to snap weekends and holidays to valid trade dates.
-        Prevents phantom cache misses and needleless API calls.
+        Prevents phantom cache misses and needless API calls.
         """
         cal = self.cme_cal if market == "CME" else self.nyse_cal
         
@@ -27,7 +27,15 @@ class MASSIVEReader(MassiveBase):
         aligned_start = valid_starts[0].strftime('%Y-%m-%d')
         
         # Snap end date BACKWARD to the most recent valid trading day
-        valid_ends = cal.valid_days(pd.to_datetime(end_date) - pd.Timedelta(days=15), end_date)
+        # 1. Convert input to pandas Timestamp and drop time component
+        end_dt = pd.to_datetime(end_date).normalize()
+        today = pd.Timestamp.today().normalize()
+    
+        # 2. Cap at today first (prevents querying future schedule data)
+        capped_end_dt = min(end_dt, today)
+        
+        # 3. Query calendar using capped_end_dt
+        valid_ends = cal.valid_days(capped_end_dt - pd.Timedelta(days=15), capped_end_dt)
         aligned_end = valid_ends[-1].strftime('%Y-%m-%d')
         
         return aligned_start, aligned_end
