@@ -197,7 +197,7 @@ class MASSIVEReader(MassiveBase):
             is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
             if is_daily_resolution:
                 if pd.to_datetime(start_date).weekday() == 6:
-                  start_date = (pd.to_datetime(start_date) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                  f_start = (pd.to_datetime(f_start) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                 massive_timespan = "session"
                 f_start_dt = pd.to_datetime(f_start)
                 shift_days = 0 if f_start_dt.weekday() == 6 else 1
