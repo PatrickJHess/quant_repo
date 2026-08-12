@@ -241,7 +241,7 @@ class MASSIVEReader(MassiveBase):
                     if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
                     df.index = df.index.tz_convert('America/New_York').tz_localize(None)
-
+            df=df.rename(columns={'ticker':'Symbol'})
             return df
 
         resolution_label = f"{multiplier}_{timespan}"
