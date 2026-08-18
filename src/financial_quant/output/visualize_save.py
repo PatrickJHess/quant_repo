@@ -9,7 +9,7 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from IPython.display import display, Markdown as md
 from pathlib import Path
-
+import altair as alt
 
 def one_y_axis(x_data, y_data_list, title="", xlabel="", ylabel="", 
                      series_labels=None, markers=None, colors=None,
@@ -336,6 +336,48 @@ def save_results(save_config: dict = None):
         return None
 
 
+def graph_uncertainty_arb(df_list, asset):
+    """
+    Combines a list of DataFrames and generates side-by-side Altair
+    line charts for Trading Volume and Closing Price.
+    """
+    # 1. Prepare the combined dataset
+    df_combined = pd.concat(df_list).reset_index(names='date')
 
+    # Calculate dynamic y-axis domains (adding a 10% buffer)
+    price_domain = [df_combined['close'].min() * 0.9, df_combined['close'].max() * 1.1]
+    volume_domain = [df_combined['volume'].min() * 0.9, df_combined['volume'].max() * 1.1]
+
+    # 2. Create a base chart with shared properties
+    # Using lines for volume avoids messy overlapping bars for multiple symbols
+    base_chart = alt.Chart(df_combined).mark_line().encode(
+        x=alt.X('date:T', title='Date'),
+        color=alt.Color('symbol:N', legend=alt.Legend(title="Symbol"))
+    )
+
+    # 3. Generate the Price Chart
+    price_chart = base_chart.encode(
+        y=alt.Y('close:Q', title='Price', scale=alt.Scale(domain=price_domain))
+    ).properties(
+        width=300,
+        height=350,
+        title=f'{asset} Closing Prices - Arb Effect'
+    )
+
+    # 4. Generate the Volume Chart
+    volume_chart = base_chart.encode(
+        y=alt.Y('volume:Q', title='Volume', scale=alt.Scale(domain=volume_domain))
+    ).properties(
+        width=300,
+        height=350,
+        title=f'{asset} Trading Volume - Uncertainty Transmission'
+    )
+
+    # 5. Combine side-by-side using the | operator
+    side_by_side_chart = volume_chart | price_chart
+
+    # Returning the chart is best practice in Jupyter environments
+    # It allows you to save the output to a variable when calling the function
+    return side_by_side_chart
 
 
