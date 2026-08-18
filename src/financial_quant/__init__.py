@@ -6,5 +6,5 @@ from .readers.fred_reader import FredReader
 from .readers.massive_reader import MASSIVEReader
 from .readers.FEDINVEST import FEDInvest,clean_FEDInvest
 from .security.credentials import secure_key_setup
-from .visualize_save_py import graph_uncertainty_arb
-__version__='0.0.2'
+from .output.visualize_save_py import graph_uncertainty_arb
+__version__='0.0.3'
