@@ -1,115 +1,110 @@
+import sys
 import requests
-from io import StringIO
 import pandas as pd
+from pathlib import Path
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 from financial_quant.quant_core.fixed_income import adjust_bond_pay_dates
 
-def FEDInvest(price_date):
-  """
-    Fetches historical security prices from the FedInvest portal.
 
+# 1. Define repo configuration
+GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com/PatrickJHess/Static_Data_Repo/main/fedinvest"
+
+# 2. Environment-Aware Cache Routing with Google Drive
+if 'google.colab' in sys.modules:
+    from google.colab import drive
+    # Mount Google Drive (will prompt for authorization if not already mounted)
+    drive.mount('/content/drive')
+    # Route cache to persistent Google Drive folder
+    DEFAULT_CACHE_DIR = Path("/content/drive/MyDrive/fedinvest")
+else:
+    # Use standard local directory for Jupyter/VSCode
+    DEFAULT_CACHE_DIR = Path.cwd() / "cache" / "fedinvest"
+
+def FEDInvest(price_date, cache_dir=DEFAULT_CACHE_DIR):
+    """
+    Fetches historical security prices from local Parquet cache or GitHub Static Repo.
 
     Args:
         price_date (datetime.date): The date for which to retrieve prices.
-            Note: Current day is typically available after 1:00 PM ET on business days.
-
-
-
+        cache_dir (Path): Local directory to store/retrieve cached Parquet files.
 
     Returns:
-        tuple: (pandas.DataFrame, str) if successful. The DataFrame contains
-               security details (CUSIP, Price, Yield), and the string is the
-               official "Prices For" date stamp from the site.
-        tuple: (str, None) if the request fails or no data is found for the date
-                (attempt to fetch current day before 1:00 PM ET).
+        tuple: (pandas.DataFrame, datetime.date, datetime.date) 
+               (df_filtered, price_date, settlement_date)
+        tuple: (str, None, None) if the request fails or data is missing.
+    """
 
+    def make_date(date_value):
+        if not isinstance(date_value, (datetime, date)):
+            try:
+                date_value = pd.Timestamp(date_value).date()
+            except Exception as e:
+                print(f"wrong type for date: {e}")
+                return None
+        else:
+            try:
+                date_value = date_value.date()
+            except AttributeError:
+                pass
+        return date_value
 
-    Example:
-        >>> from datetime import date
-        >>> df, stamp = FEDInvest(date(2025, 3, 17))
-  """
+    # Normalize Dates
+    price_date = make_date(price_date)
+    if not price_date:
+        return "Invalid date format", None, None
 
+    price_date = adjust_bond_pay_dates(price_date)[0]
+    
+    if price_date > date.today():
+        return "price_date is in the future", None, None
 
-  def make_date(date_value):
-    # datetime64 are conerted
-    if not isinstance(date_value,(datetime,date)):
-      try:
-        date_value=pd.Timestamp(date_value).date()
-      except Exception as e: # Catch anything else unexpected
-        print(f"wrong type for settlement or maturity {e}")
+    settlement_date = price_date + relativedelta(days=1)
+    settlement_date = adjust_bond_pay_dates(settlement_date)
 
+    # 3. Standardize Parquet Filename 
+    filename = f"fedinvest_{price_date.strftime('%m_%d_%Y')}.parquet"
+    
+    # Ensure local cache folder exists
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(parents=True, exist_ok=True)
+    file_path = cache_path / filename
 
-      date_value=pd.Timestamp(settlement).date()
-    # convert timestamps and datetimes to date
+    df = None
+
+    # 4. Tier 1: Check Local/Drive Cache First
+    if file_path.exists():
+        df = pd.read_parquet(file_path)
+        
+    # 5. Tier 2: Fetch from GitHub Static Repo if not in cache
     else:
-      try:
-        date_value=date_value.date()
-      except:
-        pass
-    return date_value
+        github_url = f"{GITHUB_RAW_BASE_URL}/{filename}"
+        try:
+            # Fetch raw binary data from GitHub
+            response = requests.get(github_url, timeout=10)
+            response.raise_for_status()
+            
+            # Read bytes directly into Pandas
+            df = pd.read_parquet(BytesIO(response.content))
+            
+            # Save a copy to Google Drive/Local cache to bypass GitHub next time
+            df.to_parquet(file_path, index=False)
+            
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 404:
+                return f"Data for {price_date} not found in GitHub Repo: {filename}", None, None
+            return f"HTTP Error fetching from GitHub: {e}", None, None
+        except Exception as e:
+            return f"Error loading Parquet data: {e}", None, None
 
+    # 6. Filter Data (Drop rows maturing on or before settlement date)
+    if 'MATURITY DATE' in df.columns:
+        df['MATURITY DATE'] = pd.to_datetime(df['MATURITY DATE'])
+        df_filtered = df[df['MATURITY DATE'] > pd.to_datetime(settlement_date[0])]
+    else:
+        return "Schema Error: 'MATURITY DATE' column missing in Parquet file", None, None
 
-  price_date=make_date(price_date)
-  # make share date of prices and settlement date are settlement dates
-  price_date=adjust_bond_pay_dates(price_date)[0]
-  if price_date > date.today():
-    return "price_date is in the future", None, None
-
-
-  settlement_date=price_date+relativedelta(days=1)
-  settlement_date=adjust_bond_pay_dates(settlement_date)
-
-
-  # URL address of Treasury Direct Select A Date
-  url = "https://treasurydirect.gov/GA-FI/FedInvest/selectSecurityPriceDate"
-
-
-  # Standard headers to look like a real browser
-  headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\
-     (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Content-Type": "application/x-www-form-urlencoded"
-  }
-  #  variable names and type identified from inspecting url
-  month=str(price_date.month)
-  day=str(price_date.day)
-  year=str(price_date.year)
-
-
-  # payload passed in request post
-  payload={'priceDate.month':month,
-           'priceDate.day':day,
-           'priceDate.year':year,
-           "submit": "Show Prices"}
-
-
-  # fires off form and returns prices for date
-  try:
-        response = requests.post(url, data=payload, headers=headers, timeout=10)
-        response.raise_for_status()
-  except requests.exceptions.RequestException as e:
-        return f"Connection Error: {e}", None
-
-
-  # reads the html
-  # Pandas recommends to wrap the response in StingIO to make file like
-  tables=pd.read_html(StringIO(response.text),match='CUSIP')
-
-
-  # from inspection there is a single table
-  df=tables[0]
-
-
-  df['MATURITY DATE']=pd.to_datetime(df['MATURITY DATE'])
-
-
-  # drop rows equal to or less than settlement date
-  df_filtered=df[df['MATURITY DATE']>pd.to_datetime(settlement_date[0])]
-
-
-  return df_filtered, price_date,settlement_date[0]
-
+    return df_filtered, price_date, settlement_date[0]
 def clean_FEDInvest(df):
 
 
