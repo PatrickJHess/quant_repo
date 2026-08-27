@@ -3,6 +3,7 @@ import json
 import os
 import requests
 import pandas as pd
+import datetime as dt
 import pandas_datareader.data as web
 from .fred_base import FredBase
 from financial_quant.security.credentials import secure_key_setup
