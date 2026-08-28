@@ -1,6 +1,7 @@
 import sys
 import requests
 import pandas as pd
+from io import BytesIO
 from pathlib import Path
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
