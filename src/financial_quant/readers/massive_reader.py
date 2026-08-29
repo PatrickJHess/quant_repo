@@ -119,7 +119,15 @@ class MASSIVEReader(MassiveBase):
         # STEP 4: RETURN IMMEDIATELY ON FULL CACHE HIT
         # ------------------------------------------------------------------
         if not fetch_ranges:
-            print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from Parquet.")
+            # If the local cache file doesn't exist, we must have loaded from the static repo. 
+            # Save it locally so we don't have to hit the repo again next time.
+            if not os.path.exists(filepath):
+                os.makedirs(self.cache_dir, exist_ok=True)
+                df.to_parquet(filepath)
+                print(f"💾 Cloned static repo data to local Parquet cache for {ticker}.")
+            else:
+                print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from Parquet.")
+                
             return df.loc[start_date:end_date]
 
         # ------------------------------------------------------------------
