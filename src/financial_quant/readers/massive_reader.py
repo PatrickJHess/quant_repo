@@ -8,12 +8,16 @@ from .massive_base import MassiveBase
 
 
 class MASSIVEReader(MassiveBase):
-    def __init__(self, api_key: str = None, key_name: str = "", calls_per_minute: int = 4):
+    def __init__(self, api_key: str = None, key_name: str = "", calls_per_minute: int = 4, github_user_or_org: str = "YOUR_GITHUB_USERNAME"):
         super().__init__(api_key=api_key, key_name=key_name, calls_per_minute=calls_per_minute)
-        
+
         # 📅 Initialize market calendars once for the whole class
         self.cme_cal = mcal.get_calendar('CME_TradeDate')   # For Futures
-        self.nyse_cal = mcal.get_calendar('NYSE') # For Stocks
+        self.nyse_cal = mcal.get_calendar('NYSE')           # For Stocks
+
+        # 🌐 Base GitHub URL for static repository fallback
+        self.github_user_or_org = github_user_or_org
+        self.repo_raw_url = f"https://raw.githubusercontent.com/PatrickJHess/Static_Data_Repo/main/massive"
 
     def _align_trade_dates(self, start_date: str, end_date: str, market: str = "CME") -> tuple:
         """
@@ -21,88 +25,108 @@ class MASSIVEReader(MassiveBase):
         Prevents phantom cache misses and needless API calls.
         """
         cal = self.cme_cal if market == "CME" else self.nyse_cal
-        
+
         # Snap start date FORWARD to the next valid trading day
         valid_starts = cal.valid_days(start_date, pd.to_datetime(start_date) + pd.Timedelta(days=15))
         aligned_start = valid_starts[0].strftime('%Y-%m-%d')
-        
+
         # Snap end date BACKWARD to the most recent valid trading day
-        # 1. Convert input to pandas Timestamp and drop time component
         end_dt = pd.to_datetime(end_date).normalize()
         today = pd.Timestamp.today().normalize()
-    
-        # 2. Cap at today first (prevents querying future schedule data)
+
+        # Cap at today first
         capped_end_dt = min(end_dt, today)
-        
-        # 3. Query calendar using capped_end_dt
+
+        # Query calendar using capped_end_dt
         valid_ends = cal.valid_days(capped_end_dt - pd.Timedelta(days=15), capped_end_dt)
         aligned_end = valid_ends[-1].strftime('%Y-%m-%d')
-        
-        return aligned_start, aligned_end
 
-    def _execute_with_cache(self, fetch_callback, ticker, start_date, end_date, resolution):
+        return aligned_start, aligned_end
+    def _execute_with_cache(self, fetch_callback, ticker, start_date, end_date, resolution, market=""):
         """
-        Universal caching engine driven directly by the CSV file contents.
-        Loads existing data first, checks the date index, and dynamically fetches
-        only the missing blocks before or after the cached range.
+        Universal caching engine using Parquet files.
+        Lookup Order: Local Cache -> Static_Data_Repo (Local Clone -> GitHub) -> API Call (Missing Deltas)
         """
         safe_ticker = ticker.replace(":", "_")
-        filepath = os.path.join(self.cache_dir, f"{safe_ticker}_{resolution}_data.csv")
-        
-        # 1. LOAD THE EXISTING CACHE (The Single Source of Truth)
+        filename = f"{safe_ticker}_{resolution}_data.parquet"
+        filepath = os.path.join(self.cache_dir, filename)
+
+        df = pd.DataFrame()
+
+        # ------------------------------------------------------------------
+        # STEP 1: CHECK LOCAL CACHE
+        # ------------------------------------------------------------------
         if os.path.exists(filepath):
             try:
-                df = pd.read_csv(filepath, index_col=0)
-                df.index = pd.to_datetime(df.index, errors='coerce', utc=True)
-                df = df[df.index.notnull()]
-                if getattr(df.index, 'tz', None) is not None:
-                    df.index = df.index.tz_localize(None)
-                df = df.sort_index()
+                df = pd.read_parquet(filepath)
+                print(f"📁 Loaded {ticker} ({resolution}) from local Parquet cache.")
             except Exception:
-                # If the CSV is corrupt, pretend it doesn't exist to force a fresh pull
                 df = pd.DataFrame()
-        else:
-            df = pd.DataFrame()
 
-        # 2. CALCULATE MISSING DELTAS
-        fetch_ranges = []
-        
+        # ------------------------------------------------------------------
+        # STEP 2: FALLBACK TO STATIC DATA REPO (LOCAL OR GITHUB)
+        # ------------------------------------------------------------------
         if df.empty:
-            # We have nothing; fetch the whole requested window
+            local_repo_path = os.path.join("Static_Data_Repo", "massive", filename)
+            remote_repo_url = f"{self.repo_raw_url}/{filename}"
+
+            print(f"🔍 Cache miss. Checking Static_Data_Repo for {filename}...")
+
+            if os.path.exists(local_repo_path):
+                print(f"📦 Found locally at {local_repo_path}")
+            else:
+                print(f"🔗 Attempting remote fetch: {remote_repo_url}")
+                try:
+                    df = pd.read_parquet(remote_repo_url)
+                    print(f"🌐 Successfully loaded {ticker} from GitHub!")
+                except Exception as e:
+                    print(f"⚠️ Remote fetch failed: {e}")
+                    df = pd.DataFrame()
+        # ------------------------------------------------------------------
+        # STEP 3: CALCULATE MISSING DATE DELTAS
+        # ------------------------------------------------------------------
+        fetch_ranges = []
+
+        if df.empty:
+            # Complete miss: fetch full requested window
             fetch_ranges.append((start_date, end_date))
         else:
             req_start = pd.to_datetime(start_date)
             req_end = pd.to_datetime(end_date)
             c_start = pd.to_datetime(df.index.min().strftime('%Y-%m-%d'))
             c_end = pd.to_datetime(df.index.max().strftime('%Y-%m-%d'))
-            
-            # Check for missing data BEFORE our cache
+
+            # Gap BEFORE cached range
             if req_start < c_start:
-                # Shift 1 day back to avoid re-downloading c_start
                 fetch_end = (c_start - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                 fetch_ranges.append((start_date, fetch_end))
-            
-            # Check for missing data AFTER our cache
+
+            # Gap AFTER cached range
             if req_end > c_end:
-                # Shift 1 day forward to avoid re-downloading c_end
                 fetch_start = (c_end + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-                
-                # GUARDRAIL: Only fetch if there is at least one business day in the gap.
-                missing_bdays = len(pd.bdate_range(start=fetch_start, end=end_date))
-                
+
+                # Check valid trading days using the appropriate market calendar
+                cal = self.cme_cal if market == "CME" else self.nyse_cal
+                missing_bdays = len(cal.valid_days(start_date=fetch_start, end_date=end_date))
+
                 if missing_bdays > 0:
                     fetch_ranges.append((fetch_start, end_date))
                 else:
-                    print(f"✅ Gap ({fetch_start} to {end_date}) contains no trading days. Skipping API call.")
+                    market_name = "CME" if market == "CME" else "NYSE"
+                    print(f"✅ Gap ({fetch_start} to {end_date}) contains no valid {market_name} trading days. Skipping API call.")
 
-        # 3. IF NO DELTAS, WE HAVE A FULL CACHE HIT
+        # ------------------------------------------------------------------
+        # STEP 4: RETURN IMMEDIATELY ON FULL CACHE HIT
+        # ------------------------------------------------------------------
         if not fetch_ranges:
-            print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from CSV.")
+            print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from Parquet.")
             return df.loc[start_date:end_date]
 
-        # 4. FETCH ONLY THE MISSING PIECES
+        # ------------------------------------------------------------------
+        # STEP 5: FETCH MISSING DELTAS VIA API
+        # ------------------------------------------------------------------
         df_list = [df] if not df.empty else []
-        
+
         for f_start, f_end in fetch_ranges:
             print(f"☁️ Downloading {ticker} ({resolution}) via API from {f_start} to {f_end}...")
             self._enforce_speed_limit()
@@ -111,36 +135,39 @@ class MASSIVEReader(MassiveBase):
                 new_data = fetch_callback(f_start, f_end)
                 if new_data is not None and not new_data.empty:
                     df_list.append(new_data)
-                    
+
             except Exception as e:
                 if "429" in str(e):
                     print(f"\n🚨 SDK Server Crash! The API forcefully rejected {ticker}.")
                     print("😴 Forcing a hard 65-second server-reset penalty...")
                     time.sleep(65)
                     print(f"🔄 Attempting {ticker} one final time...")
-                    return self._execute_with_cache(fetch_callback, ticker, start_date, end_date, resolution)
+                    return self._execute_with_cache(
+                        fetch_callback, ticker, start_date, end_date, resolution, market=market
+                    )
                 else:
                     print(f"❌ Connection or Parsing error: {e}")
                     return None
 
-        # 5. MERGE, CLEAN, AND SAVE
+        # ------------------------------------------------------------------
+        # STEP 6: MERGE, CLEAN, AND SAVE TO LOCAL CACHE
+        # ------------------------------------------------------------------
         if len(df_list) == (1 if not df.empty else 0):
             print(f"⚠️ API returned no new data for requested ranges.")
             return df.loc[start_date:end_date] if not df.empty else None
 
         combined_df = pd.concat(df_list).drop_duplicates().sort_index()
-        
-        # Clean up any duplicated dates safely before saving
         combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
-        combined_df.to_csv(filepath)
+
+        # Ensure local cache folder exists and save as Parquet
+        os.makedirs(self.cache_dir, exist_ok=True)
+        combined_df.to_parquet(filepath)
 
         true_start = combined_df.index.min().strftime('%Y-%m-%d')
         true_end = combined_df.index.max().strftime('%Y-%m-%d')
-        print(f"💾 Merged and saved {ticker} to cache. (Total Coverage: {true_start} to {true_end})")
+        print(f"💾 Merged and saved {ticker} to Parquet cache. (Total Coverage: {true_start} to {true_end})")
 
         return combined_df.loc[start_date:end_date]
-
-
     # =========================================================================
     # STOCKS & EQUITIES PROVIDER METHODS
     # =========================================================================
@@ -188,7 +215,7 @@ class MASSIVEReader(MassiveBase):
             url = "https://api.massive.com/stocks/v1/dividends"
             params = {
                 "ticker": ticker,
-                "limit": 1000, 
+                "limit": 1000,
                 "sort": "ex_dividend_date.asc",
                 "apiKey": self.api_key
             }
@@ -221,7 +248,7 @@ class MASSIVEReader(MassiveBase):
     # =========================================================================
     def get_futures_data(self, contract_symbol: str, start_date: str, end_date: str, timespan: str = "day", multiplier: int = 1) -> pd.DataFrame:
         is_daily_resolution = timespan.lower() in ["day", "daily", "session"]
-        
+
         # 🛡️ Clean the dates before anything else!
         if is_daily_resolution:
             start_date, end_date = self._align_trade_dates(start_date, end_date, market="CME")
@@ -230,7 +257,7 @@ class MASSIVEReader(MassiveBase):
 
         def _fetch(f_start, f_end):
             url = f"https://api.massive.com/futures/v1/aggs/{contract_symbol}"
-            
+
             # 1. Apply start-date shift ONLY to daily/session data
             if is_daily_resolution:
                 massive_timespan = "session"
@@ -272,13 +299,13 @@ class MASSIVEReader(MassiveBase):
                 # 2. Map evening window_start times (18:00) to the Trade Date ONLY for daily bars
                 if timespan in ['day', 'week', 'month', 'session']:
                     # Massive API stamps daily futures bars at session open (the evening before).
-                    # Shift all daily/session timestamps forward 1 day to match the Trade Date. 
+                    # Shift all daily/session timestamps forward 1 day to match the Trade Date.
                     df.index = (df.index + pd.Timedelta(days=1)).normalize()
                 else:
                     if getattr(df.index, 'tz', None) is None:
                         df.index = df.index.tz_localize('UTC')
                     df.index = df.index.tz_convert('America/New_York').tz_localize(None)
-            
+
             df = df.rename(columns={'ticker':'Symbol'})
             return df
 

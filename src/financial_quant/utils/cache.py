@@ -40,17 +40,17 @@ def setup_cache_dir(folder_name: str, shared_env_var: str = None) -> str:
 def cache_inventory(cache_dir: str, symbol: str = ''):
     """
     Scans the cache directory and prints a helpful inventory of available files.
-    Only inventories files with a .csv suffix that start with the provided symbol.
+    Inventories files with a .csv or .parquet suffix that start with the provided symbol.
     """
     if not os.path.exists(cache_dir):
         print(f"ℹ️ Cache directory does not exist: {cache_dir}")
         return []
 
-    # Modified: filter for .csv files AND files that start with the symbol string
+    # Modified: filter for BOTH .csv and .parquet files AND files that start with the symbol string
     files = [
         f for f in os.listdir(cache_dir) 
         if os.path.isfile(os.path.join(cache_dir, f)) 
-        and f.endswith('.csv') 
+        and f.endswith(('.csv', '.parquet')) 
         and f.startswith(symbol)
     ]
     
@@ -58,7 +58,7 @@ def cache_inventory(cache_dir: str, symbol: str = ''):
         print("📂 The cache directory is currently empty or no files match your criteria.")
         return []
 
-    print(f"📂 Found {len(files)} matching .csv files in cache:")
+    print(f"📂 Found {len(files)} matching .csv and .parquet files in cache:")
     for f in files[:15]:  # Limit output to prevent console spam
         print(f"  - {f}")
     
@@ -79,13 +79,14 @@ def cache_clear(cache_dir: str, symbol: str = None, force: bool = False):
         return
 
     if symbol:
-        search_pattern = os.path.join(cache_dir, f"{symbol}_*")
-        files_to_remove = glob.glob(search_pattern)
+        # Search explicitly for .csv and .parquet to avoid deleting other file types
+        csv_pattern = os.path.join(cache_dir, f"{symbol}_*.csv")
+        parquet_pattern = os.path.join(cache_dir, f"{symbol}_*.parquet")
+        files_to_remove = glob.glob(csv_pattern) + glob.glob(parquet_pattern)
         
         if not files_to_remove:
             print(f"ℹ️ No cached files found for symbol: '{symbol}'")
             print("---")
-            # Modified: Now passes the symbol into cache_inventory to show relevant .csv files
             cache_inventory(cache_dir, symbol) 
             return
 
