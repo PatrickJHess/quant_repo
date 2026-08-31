@@ -20,7 +20,7 @@ else:
 
 def static_futures_data(file_name, cache_dir=DEFAULT_CACHE_DIR):
     # 3. Standardize Parquet Filename 
-    filename = file_name
+    filename = f"{file_name}.parquet"
         # Ensure local cache folder exists
     cache_path = Path(cache_dir)
     cache_path.mkdir(parents=True, exist_ok=True)
@@ -43,11 +43,11 @@ def static_futures_data(file_name, cache_dir=DEFAULT_CACHE_DIR):
             response.raise_for_status()
             
             # Read bytes directly into Pandas
-            df = pd.read_parquet(BytesIO(response.content)).set_index('Date')
+            df = pd.read_parquet(BytesIO(response.content))
             
             # Save a copy to Google Drive/Local cache to bypass GitHub next time
             df.to_parquet(file_path, index=False)
-            
+            df = df.set_index('Date')
         except requests.exceptions.HTTPError as e:
             if response.status_code == 404:
                 return f"Data for {price_date} not found in GitHub Repo: {filename}", None, None
