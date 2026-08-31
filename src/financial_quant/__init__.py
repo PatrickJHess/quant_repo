@@ -5,5 +5,6 @@ calc_bond_metrics_3d)
 from .readers.fred_reader import FredReader
 from .readers.massive_reader import MASSIVEReader
 from .readers.FEDINVEST import FEDInvest,clean_FEDInvest
+from .readers.Futures_Static_Data import static_futures_data
 from .security.credentials import secure_key_setup
 __version__='0.0.4'
