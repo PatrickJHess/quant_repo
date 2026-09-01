@@ -131,6 +131,15 @@ def process_and_push(input_csv_folder, repo_name, target_repo_folder):
                 # Sanitize filename: replace colons with underscores for OS/Git safety
                 clean_name = csv_file.with_suffix('.parquet').name.replace(':', '_')
                 final_dest = target_path / clean_name
+                if final_dest.exists():
+                    existing_df = pd.read_parquet(final_dest)
+                    new_df = pd.read_parquet("temp.parquet")
+                    
+                    # Compare actual data, ignoring file metadata/timestamps
+                    if existing_df.equals(new_df):
+                        print(f"⏩ Data for {clean_name} is unchanged. Skipping update.")
+                        os.remove("temp.parquet")
+                        continue # Skip to the next CSV
                 
                 shutil.move("temp.parquet", final_dest)
                 approved_count += 1
