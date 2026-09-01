@@ -1,5 +1,6 @@
 import sys
 import requests
+import time
 import pandas as pd
 from io import BytesIO
 from pathlib import Path
