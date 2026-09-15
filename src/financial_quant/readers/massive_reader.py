@@ -96,7 +96,38 @@ class MASSIVEReader(MassiveBase):
             c_start = pd.to_datetime(df.index.min().strftime('%Y-%m-%d'))
             c_end = pd.to_datetime(df.index.max().strftime('%Y-%m-%d'))
 
-            # Gap BEFORE cached range
+            # --- 🛠️ THE FIX: EMBEDDED METADATA RATE LIMITING ---
+            # 1. Check our embedded metadata column
+            if 'last_fetched' in df.columns:
+                cache_fetch_time = pd.to_datetime(df.iloc[-1]['last_fetched']).tz_localize('America/New_York')
+            else:
+                # Fallback if an old cache file doesn't have the column yet
+                cache_fetch_time = pd.Timestamp('2000-01-01', tz='America/New_York')
+            
+            # 2. Define the settlement threshold for the last cached day (5:15 PM NY time)
+            c_end_ny = c_end.tz_localize('America/New_York')
+            settlement_time = c_end_ny.replace(hour=17, minute=15)
+            
+            # 3. Get the exact time the student is making this request
+            current_time = pd.Timestamp.now(tz='America/New_York')
+
+            # 4. Is the last day in the cache officially settled?
+
+            is_c_end_settled = cache_fetch_time >= settlement_time
+ 
+            if req_end > c_end:
+                print(f"🔄 Piggybacking on API call to refresh the last cached day ({c_end.strftime('%Y-%m-%d')})...")
+                c_end -= pd.Timedelta(days=1)
+
+            elif req_end == c_end:
+                if not is_c_end_settled:
+                    if current_time >= settlement_time:
+                        print("📉 Market has settled. Fetching final prices...")
+                        c_end -= pd.Timedelta(days=1)
+                    else:
+                        print(f"⏳ Market settling at 17:15 NY time. (Last fetched: {cache_fetch_time.strftime('%H:%M')}). Serving cache.") 
+
+           # Gap BEFORE cached range
             if req_start < c_start:
                 fetch_end = (c_start - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
                 fetch_ranges.append((start_date, fetch_end))
@@ -166,6 +197,12 @@ class MASSIVEReader(MassiveBase):
 
         combined_df = pd.concat(df_list).drop_duplicates().sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+
+        # --- 📝 ADD METADATA COLUMN HERE ---
+        # Stamp the exact time this cache was created/updated in NY time
+        ny_now = pd.Timestamp.now(tz='America/New_York').tz_localize(None)
+        combined_df['last_fetched'] = ny_now
+        # -----------------------------------
 
         # Ensure local cache folder exists and save as Parquet
         os.makedirs(self.cache_dir, exist_ok=True)
