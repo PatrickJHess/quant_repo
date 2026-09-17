@@ -9,7 +9,8 @@ import importlib.metadata
 def check_dependencies():
     """
     Checks if core dependencies from pyproject.toml are installed locally.
-    Provides copy-paste install commands if anything is missing.
+    Prompts the user for auto-installation. If aborted, falls back to providing
+    manual pip/conda commands.
     """
     required_packages = [
         "numpy", "pandas", "requests", "openpyxl", "pathvalidate", 
@@ -18,33 +19,72 @@ def check_dependencies():
         "scipy", "statsmodels", "massive"
     ]
     
+    pip_only_packages = {"massive"}
+    
     missing_packages = []
-
     for pkg in required_packages:
         try:
-            # importlib.metadata checks the pip registry natively (Python 3.8+)
             importlib.metadata.version(pkg)
         except importlib.metadata.PackageNotFoundError:
             missing_packages.append(pkg)
 
-    if missing_packages:
-        is_conda = os.path.exists(os.path.join(sys.prefix, 'conda-meta'))
-        
-        print("⚠️ Missing required dependencies for 'financial_quant'.")
-        print("To protect your local environment, auto-installation of dependencies is disabled.")
+    if not missing_packages:
+        return True
+
+    print(f"⚠️ Missing dependencies detected: {', '.join(missing_packages)}")
+    
+    # Pause and wait for user confirmation
+    try:
+        user_choice = input("Would you like to automatically install these missing dependencies? (y/n): ").strip().lower()
+    except EOFError:
+        # Handles headless environments where input() fails
+        user_choice = 'n'
+
+    is_conda = os.path.exists(os.path.join(sys.prefix, 'conda-meta'))
+    
+    conda_pkgs = [pkg for pkg in missing_packages if pkg not in pip_only_packages]
+    pip_pkgs = [pkg for pkg in missing_packages if pkg in pip_only_packages]
+
+    # Fallback to manual installation if the user aborts
+    if user_choice != 'y':
+        print("\n❌ Auto-installation aborted by user.")
         print("-" * 50)
         
         if is_conda:
-            print("Since you are using Conda, please run this in a new notebook cell:")
-            print(f"    !conda install -y -c conda-forge {' '.join(missing_packages)}")
-            print("    (Note: If conda cannot find a package, use pip for that specific one)")
+            print("Since you are using Conda, please run these commands in a new notebook cell:")
+            if conda_pkgs:
+                print(f"    !conda install -y -c conda-forge {' '.join(conda_pkgs)}")
+            if pip_pkgs:
+                print(f"    !pip install {' '.join(pip_pkgs)}")
         else:
-            print("Please run this in a new notebook cell:")
+            print("Please run this command in a new notebook cell:")
             print(f"    !pip install {' '.join(missing_packages)}")
             
         print("-" * 50)
         return False
+
+    # Proceed with auto-installation
+    print("\n🔄 Auto-installing missing packages...")
+    
+    if is_conda:
+        if conda_pkgs:
+            print(f"📦 Installing via Conda: {', '.join(conda_pkgs)}")
+            try:
+                subprocess.check_call(["conda", "install", "-y", "-c", "conda-forge"] + conda_pkgs)
+            except subprocess.CalledProcessError:
+                print("⚠️ Conda install failed. Falling back to pip for remaining packages...")
+                pip_pkgs.extend(conda_pkgs) 
+                
+        if pip_pkgs:
+            print(f"📦 Installing via pip: {', '.join(pip_pkgs)}")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + pip_pkgs)
+            
+    else:
+        print(f"📦 Installing via pip: {', '.join(missing_packages)}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + missing_packages)
         
+    print("✅ All dependencies installed successfully.")
+    print("-" * 50)
     return True
 
 
