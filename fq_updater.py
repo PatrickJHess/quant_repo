@@ -9,8 +9,8 @@ import importlib.metadata
 def check_dependencies():
     """
     Checks if core dependencies from pyproject.toml are installed locally.
-    Prompts the user for auto-installation. If aborted, falls back to providing
-    manual pip/conda commands.
+    Prompts for local auto-installation, but silently auto-installs in 
+    cloud environments (Binder/Colab).
     """
     required_packages = [
         "numpy", "pandas", "requests", "openpyxl", "pathvalidate", 
@@ -33,12 +33,20 @@ def check_dependencies():
 
     print(f"⚠️ Missing dependencies detected: {', '.join(missing_packages)}")
     
-    # Pause and wait for user confirmation
-    try:
-        user_choice = input("Would you like to automatically install these missing dependencies? (y/n): ").strip().lower()
-    except EOFError:
-        # Handles headless environments where input() fails
-        user_choice = 'n'
+    # Cloud detection logic
+    is_colab = 'google.colab' in sys.modules
+    is_binder = 'BINDER_PORT' in os.environ
+    
+    if is_colab or is_binder:
+        print("☁️ Cloud environment detected. Bypassing prompt and auto-installing...")
+        user_choice = 'y'
+    else:
+        # Pause and wait for user confirmation locally
+        try:
+            user_choice = input("Would you like to automatically install these missing dependencies? (y/n): ").strip().lower()
+        except EOFError:
+            # Handles headless environments where input() fails
+            user_choice = 'n'
 
     is_conda = os.path.exists(os.path.join(sys.prefix, 'conda-meta'))
     
@@ -64,29 +72,40 @@ def check_dependencies():
         return False
 
     # Proceed with auto-installation
-    print("\n🔄 Auto-installing missing packages...")
+    print("\n🔄 Auto-installing missing packages (this may take a moment)...")
     
     if is_conda:
         if conda_pkgs:
             print(f"📦 Installing via Conda: {', '.join(conda_pkgs)}")
             try:
-                subprocess.check_call(["conda", "install", "-y", "-c", "conda-forge"] + conda_pkgs)
+                subprocess.check_call(
+                    ["conda", "install", "-y", "-q", "-c", "conda-forge"] + conda_pkgs,
+                    stdout=subprocess.DEVNULL, 
+                    stderr=subprocess.DEVNULL
+                )
             except subprocess.CalledProcessError:
                 print("⚠️ Conda install failed. Falling back to pip for remaining packages...")
                 pip_pkgs.extend(conda_pkgs) 
                 
         if pip_pkgs:
             print(f"📦 Installing via pip: {', '.join(pip_pkgs)}")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + pip_pkgs)
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-q"] + pip_pkgs,
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL
+            )
             
     else:
         print(f"📦 Installing via pip: {', '.join(missing_packages)}")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + missing_packages)
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q"] + missing_packages,
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL
+        )
         
     print("✅ All dependencies installed successfully.")
     print("-" * 50)
     return True
-
 
 def import_financial_quant():
     """
