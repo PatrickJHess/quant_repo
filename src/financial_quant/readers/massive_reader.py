@@ -187,6 +187,10 @@ class MASSIVEReader(MassiveBase):
                     return self._execute_with_cache(
                         fetch_callback, ticker, start_date, end_date, resolution, market=market, max_api_lookback_years=max_api_lookback_years
                     )
+                elif "403" in error_msg or "Forbidden" in error_msg:
+                    print(f"🙈 API Tier Limit Reached (403) for range {f_start} to {f_end}. Falling back to local ffill().")
+                elif "404" in error_msg or "Not Found" in error_msg:
+                    print(f"🤷‍♂️ Massive API has no data (404) for range {f_start} to {f_end}. Falling back to local ffill().")
                 else:
                     print(f"❌ Connection or Parsing error: {e}")
 
