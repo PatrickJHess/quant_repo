@@ -42,31 +42,77 @@ class MASSIVEReader(MassiveBase):
         aligned_end = valid_ends[-1].strftime('%Y-%m-%d')
 
         return aligned_start, aligned_end
-    def _execute_with_cache(self, fetch_callback, ticker, start_date, end_date, resolution, market=""):
+
+    def _execute_with_cache(
+        self, 
+        fetch_callback, 
+        ticker: str, 
+        start_date: str, 
+        end_date: str, 
+        resolution: str, 
+        market: str = "",
+        max_api_lookback_years: float = None
+    ):
         """
-        Universal caching engine using Parquet files.
-        Lookup Order: Local Cache -> Static_Data_Repo (Local Clone -> GitHub) -> API Call (Missing Deltas)
+        Universal self-healing caching engine using Parquet files.
+        Lookup Order: Local Cache -> Static_Data_Repo -> API Call (Expanded on Corrupted Ranges)
+        
+        Handles Free-Tier API limits gracefully:
+        1. Pre-cutoff corruptions: Sanitizes locally via ffill().
+        2. Post-cutoff corruptions: Expands API fetch range from earliest error to end_date using 1 API call credit.
         """
         safe_ticker = ticker.replace(":", "_")
         filename = f"{safe_ticker}_{resolution}_data.parquet"
         filepath = os.path.join(self.cache_dir, filename)
 
+        # 📅 Determine API tier cutoff date
+        lookback_years = max_api_lookback_years if max_api_lookback_years is not None else getattr(self, 'max_api_lookback_years', 2.0)
+        api_cutoff_dt = pd.Timestamp.today().normalize() - pd.DateOffset(years=lookback_years)
+
         df = pd.DataFrame()
+        fetch_ranges = []
 
         # ------------------------------------------------------------------
-        # STEP 1: CHECK LOCAL CACHE
+        # STEP 1: CHECK LOCAL CACHE & IDENTIFY CORRUPTED DATE TAILS
         # ------------------------------------------------------------------
         if os.path.exists(filepath):
             try:
                 df = pd.read_parquet(filepath)
-                print(f"📁 Loaded {ticker} ({resolution}) from local Parquet cache.")
-            except Exception:
+                price_cols = [c for c in ['settlement_price', 'close', 'c', 'price', 'settle'] if c in df.columns]
+                
+                if price_cols:
+                    invalid_mask = (df[price_cols] <= 0).any(axis=1) | df[price_cols].isna().any(axis=1)
+                    if invalid_mask.any():
+                        bad_cached_dates = df.index[invalid_mask]
+                        print(f"⚠️ Detected {len(bad_cached_dates)} zero/missing price row(s) in local cache for {ticker}.")
+                        
+                        fetchable_bad_dates = bad_cached_dates[bad_cached_dates >= api_cutoff_dt]
+                        unfetchable_bad_dates = bad_cached_dates[bad_cached_dates < api_cutoff_dt]
+
+                        # 1. Historical data beyond API reach -> ffill locally
+                        if len(unfetchable_bad_dates) > 0:
+                            print(f"🙈 {len(unfetchable_bad_dates)} row(s) predate the {lookback_years}-yr API limit ({api_cutoff_dt.strftime('%Y-%m-%d')}). Forward-filling locally.")
+                            df[price_cols] = df[price_cols].mask(df[price_cols] <= 0, np.nan).ffill().bfill()
+
+                        # 2. Corrupted data within API reach -> Expand API call to refresh everything from min_bad_date onwards
+                        if len(fetchable_bad_dates) > 0:
+                            earliest_bad_date = fetchable_bad_dates.min().strftime('%Y-%m-%d')
+                            print(f"🔄 Expanding API fetch: Refreshing all data from earliest error ({earliest_bad_date}) to {end_date}...")
+                            
+                            # Trim off the bad tail from the local cache so the fresh API payload seamlessly replaces it
+                            df = df[df.index < fetchable_bad_dates.min()]
+                            
+                            # Force API fetch range from earliest bad date to end_date
+                            fetch_ranges.append((earliest_bad_date, end_date))
+
+            except Exception as e:
+                print(f"⚠️ Local cache unreadable for {filename}: {e}")
                 df = pd.DataFrame()
 
         # ------------------------------------------------------------------
-        # STEP 2: FALLBACK TO STATIC DATA REPO (LOCAL OR GITHUB)
+        # STEP 2: FALLBACK TO STATIC REPO IF LOCAL CACHE IS EMPTY
         # ------------------------------------------------------------------
-        if df.empty:
+        if df.empty and not fetch_ranges:
             local_repo_path = os.path.join("Static_Data_Repo", "massive", filename)
             remote_repo_url = f"{self.repo_raw_url}/{filename}"
 
@@ -74,6 +120,10 @@ class MASSIVEReader(MassiveBase):
 
             if os.path.exists(local_repo_path):
                 print(f"📦 Found locally at {local_repo_path}")
+                try:
+                    df = pd.read_parquet(local_repo_path)
+                except Exception:
+                    df = pd.DataFrame()
             else:
                 print(f"🔗 Attempting remote fetch: {remote_repo_url}")
                 try:
@@ -82,87 +132,41 @@ class MASSIVEReader(MassiveBase):
                 except Exception as e:
                     print(f"⚠️ Remote fetch failed: {e}")
                     df = pd.DataFrame()
-        # ------------------------------------------------------------------
-        # STEP 3: CALCULATE MISSING DATE DELTAS
-        # ------------------------------------------------------------------
-        fetch_ranges = []
 
-        if df.empty:
-            # Complete miss: fetch full requested window
-            fetch_ranges.append((start_date, end_date))
-        else:
-            req_start = pd.to_datetime(start_date)
+        # ------------------------------------------------------------------
+        # STEP 3: CALCULATE MISSING DATE DELTAS (IF NOT ALREADY EXPANDED)
+        # ------------------------------------------------------------------
+        effective_start = max(pd.to_datetime(start_date), api_cutoff_dt).strftime('%Y-%m-%d')
+
+        if df.empty and not fetch_ranges:
+            if pd.to_datetime(end_date) >= api_cutoff_dt:
+                fetch_ranges.append((effective_start, end_date))
+        elif not fetch_ranges:
             req_end = pd.to_datetime(end_date)
             c_start = pd.to_datetime(df.index.min().strftime('%Y-%m-%d'))
             c_end = pd.to_datetime(df.index.max().strftime('%Y-%m-%d'))
 
-            # --- 🛠️ THE FIX: EMBEDDED METADATA RATE LIMITING ---
-            # 1. Check our embedded metadata column
-            if 'last_fetched' in df.columns:
-                cache_fetch_time = pd.to_datetime(df.iloc[-1]['last_fetched']).tz_localize('America/New_York')
-            else:
-                # Fallback if an old cache file doesn't have the column yet
-                cache_fetch_time = pd.Timestamp('2000-01-01', tz='America/New_York')
-            
-            # 2. Define the settlement threshold for the last cached day (5:15 PM NY time)
-            c_end_ny = c_end.tz_localize('America/New_York')
-            settlement_time = c_end_ny.replace(hour=17, minute=15)
-            
-            # 3. Get the exact time the student is making this request
-            current_time = pd.Timestamp.now(tz='America/New_York')
-
-            # 4. Is the last day in the cache officially settled?
-
-            is_c_end_settled = cache_fetch_time >= settlement_time
- 
-            if req_end > c_end:
-                print(f"🔄 Piggybacking on API call to refresh the last cached day ({c_end.strftime('%Y-%m-%d')})...")
-                c_end -= pd.Timedelta(days=1)
-
-            elif req_end == c_end:
-                if not is_c_end_settled:
-                    if current_time >= settlement_time:
-                        print("📉 Market has settled. Fetching final prices...")
-                        c_end -= pd.Timedelta(days=1)
-                    else:
-                        print(f"⏳ Market settling at 17:15 NY time. (Last fetched: {cache_fetch_time.strftime('%H:%M')}). Serving cache.") 
-
-           # Gap BEFORE cached range
-            if req_start < c_start:
-                fetch_end = (c_start - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-                fetch_ranges.append((start_date, fetch_end))
-
-            # Gap AFTER cached range
-            if req_end > c_end:
-                fetch_start = (c_end + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-
-                # Check valid trading days using the appropriate market calendar
-                cal = self.cme_cal if market == "CME" else self.nyse_cal
-                missing_bdays = len(cal.valid_days(start_date=fetch_start, end_date=end_date))
-
-                if missing_bdays > 0:
-                    fetch_ranges.append((fetch_start, end_date))
-                else:
-                    market_name = "CME" if market == "CME" else "NYSE"
-                    print(f"✅ Gap ({fetch_start} to {end_date}) contains no valid {market_name} trading days. Skipping API call.")
+            if pd.to_datetime(effective_start) < c_start:
+                fetch_ranges.append((effective_start, (c_start - pd.Timedelta(days=1)).strftime('%Y-%m-%d')))
+            if req_end > c_end and req_end >= api_cutoff_dt:
+                fetch_start = max(c_end + pd.Timedelta(days=1), api_cutoff_dt).strftime('%Y-%m-%d')
+                fetch_ranges.append((fetch_start, end_date))
 
         # ------------------------------------------------------------------
         # STEP 4: RETURN IMMEDIATELY ON FULL CACHE HIT
         # ------------------------------------------------------------------
         if not fetch_ranges:
-            # If the local cache file doesn't exist, we must have loaded from the static repo. 
-            # Save it locally so we don't have to hit the repo again next time.
-            if not os.path.exists(filepath):
+            if not os.path.exists(filepath) and not df.empty:
                 os.makedirs(self.cache_dir, exist_ok=True)
                 df.to_parquet(filepath)
                 print(f"💾 Cloned static repo data to local Parquet cache for {ticker}.")
             else:
-                print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded directly from Parquet.")
+                print(f"⚡ Full cache hit for {ticker} ({resolution}). Loaded cleanly from Parquet.")
                 
-            return df.loc[start_date:end_date]
+            return df.loc[start_date:end_date] if not df.empty else None
 
         # ------------------------------------------------------------------
-        # STEP 5: FETCH MISSING DELTAS VIA API
+        # STEP 5: FETCH MISSING / EXPANDED DATA VIA API
         # ------------------------------------------------------------------
         df_list = [df] if not df.empty else []
 
@@ -174,45 +178,43 @@ class MASSIVEReader(MassiveBase):
                 new_data = fetch_callback(f_start, f_end)
                 if new_data is not None and not new_data.empty:
                     df_list.append(new_data)
-
             except Exception as e:
                 if "429" in str(e):
-                    print(f"\n🚨 SDK Server Crash! The API forcefully rejected {ticker}.")
+                    print(f"\n🚨 SDK Server Crash! Hard rate limit hit for {ticker}.")
                     print("😴 Forcing a hard 65-second server-reset penalty...")
                     time.sleep(65)
-                    print(f"🔄 Attempting {ticker} one final time...")
                     return self._execute_with_cache(
-                        fetch_callback, ticker, start_date, end_date, resolution, market=market
+                        fetch_callback, ticker, start_date, end_date, resolution, market=market, max_api_lookback_years=max_api_lookback_years
                     )
                 else:
                     print(f"❌ Connection or Parsing error: {e}")
-                    return None
 
         # ------------------------------------------------------------------
-        # STEP 6: MERGE, CLEAN, AND SAVE TO LOCAL CACHE
+        # STEP 6: MERGE, SANITIZE, AND PERSIST REPAIRED CACHE
         # ------------------------------------------------------------------
-        if len(df_list) == (1 if not df.empty else 0):
-            print(f"⚠️ API returned no new data for requested ranges.")
-            return df.loc[start_date:end_date] if not df.empty else None
+        if df_list:
+            combined_df = pd.concat(df_list).drop_duplicates().sort_index()
+            combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
 
-        combined_df = pd.concat(df_list).drop_duplicates().sort_index()
-        combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+            # Final safety pass: Clean any residual zero/negative values across the whole dataset
+            price_cols = [c for c in ['settlement_price', 'close', 'c', 'price', 'settle'] if c in combined_df.columns]
+            for col in price_cols:
+                combined_df[col] = combined_df[col].mask(combined_df[col] <= 0, np.nan)
+                if combined_df[col].isna().any():
+                    combined_df[col] = combined_df[col].ffill().bfill()
 
-        # --- 📝 ADD METADATA COLUMN HERE ---
-        # Stamp the exact time this cache was created/updated in NY time
-        ny_now = pd.Timestamp.now(tz='America/New_York').tz_localize(None)
-        combined_df['last_fetched'] = ny_now
-        # -----------------------------------
+            # Stamp metadata timestamp and save clean state to disk
+            combined_df['last_fetched'] = pd.Timestamp.now(tz='America/New_York').tz_localize(None)
+            os.makedirs(self.cache_dir, exist_ok=True)
+            combined_df.to_parquet(filepath)
 
-        # Ensure local cache folder exists and save as Parquet
-        os.makedirs(self.cache_dir, exist_ok=True)
-        combined_df.to_parquet(filepath)
+            true_start = combined_df.index.min().strftime('%Y-%m-%d')
+            true_end = combined_df.index.max().strftime('%Y-%m-%d')
+            print(f"💾 Merged and saved clean {ticker} data to Parquet cache. (Total Coverage: {true_start} to {true_end})")
 
-        true_start = combined_df.index.min().strftime('%Y-%m-%d')
-        true_end = combined_df.index.max().strftime('%Y-%m-%d')
-        print(f"💾 Merged and saved {ticker} to Parquet cache. (Total Coverage: {true_start} to {true_end})")
+            return combined_df.loc[start_date:end_date]
 
-        return combined_df.loc[start_date:end_date]
+        return df.loc[start_date:end_date] if not df.empty else None
     # =========================================================================
     # STOCKS & EQUITIES PROVIDER METHODS
     # =========================================================================
