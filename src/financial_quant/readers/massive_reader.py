@@ -3,7 +3,7 @@ import time
 import json
 import requests
 import pandas as pd
-import numpy as pd
+import numpy as np
 import pandas_market_calendars as mcal
 from .massive_base import MassiveBase
 
