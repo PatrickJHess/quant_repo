@@ -282,6 +282,10 @@ class FredReader(FredBase):
             os.makedirs(self.cache_dir, exist_ok=True)
             df.to_parquet(filepath)
             print(f"Success! Saved fresh Parquet data to {filepath}.")
+
+            # Update the JSON file so the 7-day TTL clock resets!
+            if not metadata_updated_this_run:
+                update_metadata()            
             return df
 
         except Exception as e:
