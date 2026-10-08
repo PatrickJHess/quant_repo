@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "financial_quant"
-version = "0.0.4"
+version = "0.0.5"
 description = "Financial quantitative analysis tools"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -23,6 +23,7 @@ dependencies = [
     "holidays",
     "pathvalidate",
     "html5lib",
+    "seaborn==0.13.2"  # Locked to Colab's working version
     
     # Advanced Math & Stats
     "scipy",
