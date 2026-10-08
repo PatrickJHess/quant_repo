@@ -23,7 +23,7 @@ dependencies = [
     "holidays",
     "pathvalidate",
     "html5lib",
-    "seaborn==0.13.2"  # Locked to Colab's working version
+    "seaborn==0.13.2",  # Locked to Colab's working version
     
     # Advanced Math & Stats
     "scipy",
