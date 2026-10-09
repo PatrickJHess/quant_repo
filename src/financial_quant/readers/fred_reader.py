@@ -196,6 +196,7 @@ class FredReader(FredBase):
                 )
 
         # --- 4. CHECK LOCAL CACHE (PARQUET) ---
+        
         if os.path.exists(filepath) and not metadata_is_stale:
             try:
                 df = pd.read_parquet(filepath)
@@ -212,8 +213,13 @@ class FredReader(FredBase):
 
                 if valid_start and valid_end:
                     print(f"✅ Loaded {series_id} from local Parquet cache.")
+
                     if start_date:
                         df = df[df.index >= pd.to_datetime(start_date)]
+                    else:
+                        first_date_str = cache_start.strftime("%Y-%m-%d")
+                        print(f"⚠️ No start date provided. Starting at first date in cache: {first_date_str}")
+
                     if end_date:
                         df = df[df.index <= pd.to_datetime(end_date)]
                     return df
