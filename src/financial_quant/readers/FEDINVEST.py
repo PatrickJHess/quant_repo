@@ -130,6 +130,7 @@ def clean_FEDInvest(df):
                          'BUY':'Price Ask',
                          'SELL':'Price Bid'}
     security_df.rename(columns=change_column_names,inplace=True)
+    security_df['Coupon']=security_df['Coupon']*100
 
 
     # Formats Numeric Data
