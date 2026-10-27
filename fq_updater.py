@@ -12,11 +12,12 @@ def check_dependencies():
     Prompts for local auto-installation, but silently auto-installs in 
     cloud environments (Binder/Colab/JupyterHub).
     """
+    # 1. FIXED: Added 'seaborn' to the required packages list
     required_packages = [
         "numpy", "pandas", "requests", "openpyxl", "pathvalidate", 
         "python-dateutil", "pandas-datareader", "pandas_market_calendars", 
         "pyarrow", "matplotlib", "altair", "holidays", "html5lib", 
-        "scipy", "statsmodels", "massive"
+        "scipy", "statsmodels", "massive", "seaborn"
     ]
     
     pip_only_packages = {"massive"}
@@ -76,7 +77,7 @@ def check_dependencies():
         print("-" * 50)
         return False
 
-    # Proceed with auto-installation
+    # Proceed with auto-installation (2. FIXED: Removed the duplicated copy of this block)
     print("\n🔄 Auto-installing missing packages (this may take a moment)...")
     
     if is_conda:
@@ -110,42 +111,9 @@ def check_dependencies():
         
     print("✅ All dependencies installed successfully.")
     print("-" * 50)
-    return True
-
-    # Proceed with auto-installation
-    print("\n🔄 Auto-installing missing packages (this may take a moment)...")
     
-    if is_conda:
-        if conda_pkgs:
-            print(f"📦 Installing via Conda: {', '.join(conda_pkgs)}")
-            try:
-                subprocess.check_call(
-                    ["conda", "install", "-y", "-q", "-c", "conda-forge"] + conda_pkgs,
-                    stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL
-                )
-            except subprocess.CalledProcessError:
-                print("⚠️ Conda install failed. Falling back to pip for remaining packages...")
-                pip_pkgs.extend(conda_pkgs) 
-                
-        if pip_pkgs:
-            print(f"📦 Installing via pip: {', '.join(pip_pkgs)}")
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "-q"] + pip_pkgs,
-                stdout=subprocess.DEVNULL, 
-                stderr=subprocess.DEVNULL
-            )
-            
-    else:
-        print(f"📦 Installing via pip: {', '.join(missing_packages)}")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q"] + missing_packages,
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL
-        )
-        
-    print("✅ All dependencies installed successfully.")
-    print("-" * 50)
+    # Invalidate cache so newly installed packages are immediately importable
+    importlib.invalidate_caches()
     return True
 
 def import_financial_quant():
@@ -158,6 +126,11 @@ def import_financial_quant():
     repo_install_url = "git+https://github.com/PatrickJHess/quant_repo.git"
     github_url = "https://raw.githubusercontent.com/PatrickJHess/quant_repo/master/src/financial_quant/__init__.py"
     
+    # 3. FIXED: Run dependency check FIRST, for all environments (Cloud handles it silently)
+    if not check_dependencies():
+        print("❌ Installation aborted due to missing dependencies.")
+        return None
+
     # =========================================================
     # 1. Environment Detection & Cloud Logic
     # =========================================================
@@ -172,7 +145,6 @@ def import_financial_quant():
             return fq
         except ImportError:
             print("☁️ Cloud environment detected. Installing fresh from GitHub...")
-            # Note: No --no-deps here! We WANT the cloud to auto-install dependencies.
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", repo_install_url])
             print("✅ Installation complete!")
             import financial_quant as fq
@@ -182,11 +154,6 @@ def import_financial_quant():
     # 2. Local Environment Logic 
     # =========================================================
     
-    # 0. Check dependencies before touching the local environment!
-    if not check_dependencies():
-        print("❌ Installation aborted due to missing dependencies.")
-        return None
-
     # 1. Check local version
     try:
         import financial_quant
