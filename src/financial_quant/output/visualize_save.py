@@ -11,30 +11,32 @@ from IPython.display import display, Markdown as md
 from pathlib import Path
 import altair as alt
 
-def one_y_axis(x_data, y_data_list, title="", xlabel="", ylabel="", 
+def one_y_axis(x_data, y_data_list, title="", xlabel="", ylabel="",
                      series_labels=None, markers=None, colors=None,
-                     figure_size=(10, 6), y_limits=None, 
-                     save_config=None, fill_config=None):
+                     figure_size=(10, 6), y_limits=None,
+                     save_config=None, fill_config=None, ax=None): # <-- Added ax parameter
     """
-    Plots data on a single y-axis.
+    Plots data on a single y-axis. Can plot standalone or onto an existing subplot.
 
     Args:
         x_data (array-like): Data for the x-axis.
         y_data_list (list of array-like): A list of datasets for the y-axis.
-        title (str): The title of the graph.
-        xlabel (str): The label for the x-axis.
-        ylabel (str): The label for the y-axis.
+        title (str, optional): The title of the graph.
+        xlabel (str, optional): The label for the x-axis.
+        ylabel (str, optional): The label for the y-axis.
         series_labels (list of str, optional): Identifiers for each data series. 
         markers (list of str, optional): The markers to use for each series.
         colors (list of str, optional): Colors for each series.
-        figure_size (tuple): The width and height of the figure in inches.
+        figure_size (tuple, optional): The width and height of the figure in inches. Defaults to (10, 6).
         y_limits (tuple, optional): The (min, max) values for the y-axis.
         save_config (dict, optional): Config for saving the file. Keys: 'volume', 'chapter', 'file_name'.
         fill_config (dict, optional): Config for filling areas. Keys: 'Between' (list of 1 or 2 indices),
                                       'Start', 'End', 'Colors', 'Labels', 'Alpha'.
+        ax (matplotlib.axes.Axes, optional): An existing axes object to plot on. If None, creates a new figure.
+
+      Returns:
+        matplotlib.axes.Axes: The axes object containing the plot.
     """
-
-
     num_series = len(y_data_list)
 
     # --- Smart Defaults (Frictionless Inputs) ---
@@ -48,22 +50,32 @@ def one_y_axis(x_data, y_data_list, title="", xlabel="", ylabel="",
 
     # --- Plotting Setup (Protects Global State) ---
     with plt.style.context('ggplot'):
-        fig, ax = plt.subplots(figsize=figure_size)
-        fig.suptitle(title)
+
+        # Determine if we are building a new figure or using an existing subplot
+        if ax is None:
+            fig, current_ax = plt.subplots(figsize=figure_size)
+            is_standalone = True
+        else:
+            current_ax = ax
+            is_standalone = False
+
+        # Use set_title so it applies correctly to subplots, not just the master figure
+        if title:
+            current_ax.set_title(title)
 
         # --- Pythonic Loop ---
         for y_data, label, marker, color in zip(y_data_list, series_labels, markers, colors):
-            ax.plot(x_data, y_data, label=label, marker=marker, color=color)
+            current_ax.plot(x_data, y_data, label=label, marker=marker, color=color)
 
-        # --- Implement the Missing Fill Feature ---
+        # --- Implement the Fill Feature ---
         if fill_config:
             indices = fill_config.get('Between', [0])
             y1 = y_data_list[indices[0]]
             y2 = y_data_list[indices[1]] if len(indices) > 1 else np.zeros_like(y1)
-            
+
             start, end = fill_config.get('Start', 0), fill_config.get('End', len(x_data))
-            
-            ax.fill_between(
+
+            current_ax.fill_between(
                 x_data[start:end], y1[start:end], y2[start:end],
                 color=fill_config.get('Colors', 'gray'),
                 alpha=fill_config.get('Alpha', 0.3),
@@ -72,20 +84,88 @@ def one_y_axis(x_data, y_data_list, title="", xlabel="", ylabel="",
 
         # --- Final Touches ---
         if y_limits:
-            ax.set_ylim(y_limits)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.legend()
-        plt.tight_layout()
+            current_ax.set_ylim(y_limits)
+        current_ax.set_xlabel(xlabel)
+        current_ax.set_ylabel(ylabel)
+        current_ax.legend(loc='upper right')
 
-        # --- Save Figure ---
+        # --- Save & Show (Only if standalone) ---
+        # We prevent plt.show() if passing an ax, so the parent script can build the full dashboard first
+        if is_standalone:
+            plt.tight_layout()
+            if save_config:
+                path = save_results(save_config=save_config)
+                if path:
+                    plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.show()
+
+        return current_ax
+
+def stacked_charts(top_x_data, top_data_list,bottom_data_list, 
+                   bottom_x_data=None, share_x_axis=True, 
+                   top_config=None, bottom_config=None, 
+                   top_secondary_data_list=None, top_secondary_config=None,
+                   bottom_secondary_data_list=None, bottom_secondary_config=None,
+                   figure_size=(10, 8), height_ratios=[2, 1], hspace=0.1,
+                   save_config=None):
+    """
+    Creates a stacked two-panel chart.
+
+    Args:
+        top_x_data (array-like): X-axis data for the top chart.
+        top_data_list (list of array-like): Datasets for the top chart.
+        bottom_data_list (list of array-like): Datasets for the bottom chart.
+        bottom_x_data (array-like, optional): X-axis data for the bottom chart. 
+            If None, falls back to using `top_x_data`. Defaults to None.
+        share_x_axis (bool, optional): If True, links the top and bottom x-axes 
+            and hides the top x-axis labels. Defaults to True.
+        ... [other args remain the same] ...
+    """
+    # If no separate bottom x-data is provided, assume they share the same x-axis
+    if bottom_x_data is None:
+        bottom_x_data = top_x_data
+
+    top_config = top_config or {}
+    bottom_config = bottom_config or {}
+    top_secondary_config = top_secondary_config or {}
+    bottom_secondary_config = bottom_secondary_config or {}
+
+    with plt.style.context('ggplot'):
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, 
+            figsize=figure_size, 
+            sharex=share_x_axis, # <-- Now configurable
+            gridspec_kw={'height_ratios': height_ratios}
+        )
+        fig.subplots_adjust(hspace=hspace)
+
+        # --- 1. Top Chart ---
+        one_y_axis(top_x_data, top_data_list, ax=ax1, **top_config)
+        
+        if top_secondary_data_list:
+            ax1_twin = ax1.twinx()
+            ax1_twin.grid(False) 
+            one_y_axis(top_x_data, top_secondary_data_list, ax=ax1_twin, **top_secondary_config)
+
+        # --- 2. Bottom Chart ---
+        one_y_axis(bottom_x_data, bottom_data_list, ax=ax2, **bottom_config)
+        
+        if bottom_secondary_data_list:
+            ax2_twin = ax2.twinx()
+            ax2_twin.grid(False)
+            one_y_axis(bottom_x_data, bottom_secondary_data_list, ax=ax2_twin, **bottom_secondary_config)
+
+        plt.tight_layout()
+        
         if save_config:
-            # Assuming save_results is imported/defined elsewhere in your script
             path = save_results(save_config=save_config)
             if path:
                 plt.savefig(path, dpi=300, bbox_inches='tight')
-
+        
         plt.show()
+        
+        return fig, (ax1, ax2)
+
 def create_workbook(df,sheet_name='sheet1', save_config=None):
     """
     Writes a DataFrame to a specific sheet in an Excel workbook and auto-fits
