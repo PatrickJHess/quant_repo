@@ -180,7 +180,8 @@ class MASSIVEReader(MassiveBase):
                 if new_data is not None and not new_data.empty:
                     df_list.append(new_data)
             except Exception as e:
-                if "429" in str(e):
+                error_msg = str(e)
+                if "429" in error_msg:
                     print(f"\n🚨 SDK Server Crash! Hard rate limit hit for {ticker}.")
                     print("😴 Forcing a hard 65-second server-reset penalty...")
                     time.sleep(65)
