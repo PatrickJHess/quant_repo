@@ -8,6 +8,7 @@ import pandas_datareader.data as web
 from .fred_base import FredBase
 from financial_quant.security.credentials import secure_key_setup
 
+
 class FredReader(FredBase):
 
     def __init__(
@@ -16,7 +17,7 @@ class FredReader(FredBase):
         key_name="fred_key",
         github_raw_base=None,
         cache_dir=None,
-        enable_github_repo=False,  # <-- Staging flag: Set to False for now
+        enable_github_repo=False,
     ):
         super(FredReader, self).__init__(api_key=api_key, key_name=key_name)
         if cache_dir:
@@ -29,15 +30,13 @@ class FredReader(FredBase):
 
     # --- PUBLIC WRAPPER METHOD ---
     def get_series(
-        self, series_ids, start_date=None, end_date=None, ttl_days=7
+        self, series_ids, start_date=None, end_date=None, ttl_days=None
     ):
         """Fetches one or more series and returns them in a single merged DataFrame."""
         if isinstance(series_ids, str):
             series_ids = [series_ids]
         elif not hasattr(series_ids, "__iter__"):
-            raise TypeError(
-                "series_ids must be a string or an iterable of strings."
-            )
+            raise TypeError("series_ids must be a string or an iterable of strings.")
 
         dataframes = []
 
@@ -47,7 +46,6 @@ class FredReader(FredBase):
                 series_id,
                 start_date=start_date,
                 end_date=end_date,
-                ttl_days=ttl_days,
             )
             if df is not None and not df.empty:
                 dataframes.append(df)
@@ -67,229 +65,123 @@ class FredReader(FredBase):
             return None
 
     # --- CORE WORKHORSE METHOD ---
-    def _get_single_series(
-        self, series_id, start_date=None, end_date=None, ttl_days=7
-    ):
-        # Local Parquet & Metadata Paths
+    def _get_single_series(self, series_id, start_date=None, end_date=None):
         filepath = os.path.abspath(
             os.path.join(self.cache_dir, f"{series_id}_fred.parquet")
         )
-        metadata_file = os.path.abspath(
-            os.path.join(self.cache_dir, f"{series_id}_metadata.json")
-        )
 
-        metadata = {}
-        metadata_is_stale = True
-        metadata_updated_this_run = False
+        cached_df = None
+        needs_api_fetch = True
+        fetch_start = start_date  # Default to user's requested start date
 
-        # --- NESTED METADATA HELPER ---
-        def update_metadata():
-            nonlocal metadata, metadata_updated_this_run
-            if not self.api_key:
-                return True
+        # Normalize requested dates to strip time components
+        req_start = pd.to_datetime(start_date).normalize() if start_date else None
+        req_end = pd.to_datetime(end_date).normalize() if end_date else None
 
-            meta_url = f"https://api.stlouisfed.org/fred/series?series_id={series_id}&api_key={self.api_key}&file_type=json"
+        # --- 1. LOAD LOCAL CACHE (The Source of Truth) ---
+        if os.path.exists(filepath):
             try:
-                meta_data = self._make_api_request(
-                    meta_url, series_id=series_id
-                )
-                if not meta_data or "seriess" not in meta_data:
-                    return False
+                cached_df = pd.read_parquet(filepath)
+                cache_start = cached_df.index.min().normalize()
+                cache_end = cached_df.index.max().normalize()
 
-                if len(meta_data["seriess"]) > 0:
-                    series_info = meta_data["seriess"][0]
-                    metadata["series_inception"] = series_info.get(
-                        "observation_start"
-                    )
-                    metadata["series_last_observed"] = series_info.get(
-                        "observation_end"
-                    )
-                    metadata["title"] = series_info.get("title")
-                    metadata["frequency"] = series_info.get("frequency")
-                    metadata["last_updated"] = dt.datetime.now(
-                        dt.timezone.utc
-                    ).isoformat()
-
-                    os.makedirs(self.cache_dir, exist_ok=True)
-                    with open(metadata_file, "w") as f:
-                        json.dump(metadata, f, indent=4)
-
-                    metadata_updated_this_run = True
-                    print("⏳ Metadata synced and timestamp updated.")
-                    return True
-            except Exception as e:
-                print(f"⚠️ Could not update metadata: {e}")
-                return False
-
-        # --- 1. READ LOCAL METADATA ---
-        if os.path.exists(metadata_file):
-            try:
-                with open(metadata_file, "r") as f:
-                    metadata = json.load(f)
-            except (json.JSONDecodeError, ValueError):
-                print(
-                    f"⚠️ Warning: Corrupt metadata for {series_id}. Resetting..."
-                )
-                metadata = {}
-                try:
-                    os.remove(metadata_file)
-                except Exception:
-                    pass
-
-            if "last_updated" in metadata:
-                last_updated = dt.datetime.fromisoformat(
-                    metadata["last_updated"]
-                )
-                if last_updated.tzinfo is None:
-                    last_updated = last_updated.replace(tzinfo=dt.timezone.utc)
-
-                days_old = (
-                    dt.datetime.now(dt.timezone.utc) - last_updated
-                ).days
-                if days_old < ttl_days:
-                    metadata_is_stale = False
-                    print(f"🕒 Metadata is fresh ({days_old} days old).")
+                # Do we need older data than the cache has?
+                if req_start and req_start < cache_start:
+                    print(f"⚠️ Requested start ({req_start.strftime('%Y-%m-%d')}) is older than cache ({cache_start.strftime('%Y-%m-%d')}). Triggering full history backfill...")
+                    fetch_start = start_date
+                    cached_df = None  # Discard cache memory to trigger a clean, full redownload
                 else:
-                    print(
-                        f"⏳ Metadata is {days_old} days old (TTL: {ttl_days}). It's stale."
-                    )
-
-        # --- 2. SMART PING (Get LIVE max date from FRED) ---
-        if not metadata:
-            print(f"🆕 First run for {series_id}. Initializing metadata...")
-            update_metadata()
-            
-        # 1. Start by assuming FRED's max is what we saved in the JSON ("the last time we looked")
-        true_fred_max = None
-        if "series_last_observed" in metadata:
-            true_fred_max = pd.to_datetime(metadata["series_last_observed"]).normalize()
-
-        if self.api_key and end_date and true_fred_max:
-            req_date = pd.to_datetime(end_date).normalize()
-            
-            # 2. If the user wants a date NEWER than our cached JSON...
-            if req_date > true_fred_max:
-                print("🔎 Requested date exceeds cached FRED max. Pinging live FRED servers...")
-                if update_metadata():  
-                    # update_metadata() just hit FRED's servers and got the real-time max date.
-                    # 3. Update our true_fred_max to the LIVE date straight from FRED!
-                    true_fred_max = pd.to_datetime(metadata["series_last_observed"]).normalize()
-                    
-                    # Crucial: Reset the stale flag so Step 4 knows it can trust the cache again!
-                    metadata_is_stale = False
-
-        # --- 3. CLAMP DATES ---
-        if "series_inception" in metadata and start_date:
-            clamped_start = max(
-                pd.to_datetime(start_date).normalize(),
-                pd.to_datetime(metadata["series_inception"]).normalize(),
-            )
-            if pd.to_datetime(start_date).normalize() < clamped_start:
-                start_date = clamped_start.strftime("%Y-%m-%d")
-                print(f"⚠️ Adjusted start date to First Available Data: {start_date}")
-
-        if end_date and true_fred_max:
-            # 4. Now we clamp against the TRUE FRED MAX (which we verified from the live servers)
-            req_end = pd.to_datetime(end_date).normalize()
-            
-            if req_end > true_fred_max:
-                end_date = true_fred_max.strftime("%Y-%m-%d")
-                print(f"⚠️ Live FRED servers have no data past {end_date}. Adjusted request to match.")
-
-        # --- 4. CHECK LOCAL CACHE (PARQUET) ---
-        if os.path.exists(filepath) and not metadata_is_stale:
-            try:
-                df = pd.read_parquet(filepath)
-                cache_start = df.index.min().normalize()
-                cache_end = df.index.max().normalize()
-
-                valid_start = not (
-                    start_date
-                    and pd.to_datetime(start_date).normalize() < cache_start - pd.Timedelta(days=5)
-                )
-                valid_end = not (
-                    end_date and pd.to_datetime(end_date).normalize() > cache_end
-                )
-
-                if valid_start and valid_end:
-                    print(f"✅ Loaded {series_id} from local Parquet cache.")
-
-                    if start_date:
-                        df = df[df.index >= pd.to_datetime(start_date).normalize()]
+                    # Does the cache already have all the newest data we asked for?
+                    if req_end and req_end <= cache_end:
+                        print(f"✅ Cache fully satisfies date range. No API fetch needed.")
+                        needs_api_fetch = False
                     else:
-                        print(f"⚠️ No start date provided. Starting at first date in cache: {cache_start.strftime('%Y-%m-%d')}")
+                        # Delta fetch! Ask only for data 1 day after our cache ends.
+                        delta_start = cache_end + pd.Timedelta(days=1)
+                        fetch_start = delta_start.strftime("%Y-%m-%d")
+                        print(f"📈 Cache ends at {cache_end.strftime('%Y-%m-%d')}. Triggering delta fetch starting from {fetch_start}...")
 
-                    if end_date:
-                        df = df[df.index <= pd.to_datetime(end_date).normalize()]
-                    return df
             except Exception as e:
-                print(f"⚠️ Local cache corrupt or unreadable: {e}. Moving to next tier...")
-        # --- 5. CHECK GITHUB STATIC DATA REPO TIER ---
-        if self.enable_github_repo and self.github_raw_base:
+                print(f"⚠️ Local cache corrupt or unreadable: {e}. Rebuilding from scratch...")
+                cached_df = None
+
+        # --- 2. GITHUB STATIC REPO TIER ---
+        if cached_df is None and self.enable_github_repo and self.github_raw_base:
             github_url = f"{self.github_raw_base}/{series_id}_fred.parquet"
-            print(f"🌐 [Staged Tier] Checking GitHub Data Repo: {github_url}...")
+            print(f"🌐 [Staged Tier] Checking GitHub Repo: {github_url}...")
             try:
-                # Attempt to stream parquet directly from GitHub
-                df = pd.read_parquet(github_url)
-                print(
-                    f"✅ Found {series_id} in GitHub Repo! Caching locally..."
-                )
-
-                # Save directly to environment cache
+                repo_df = pd.read_parquet(github_url)
+                print(f"✅ Found {series_id} in GitHub Repo! Caching locally...")
                 os.makedirs(self.cache_dir, exist_ok=True)
-                df.to_parquet(filepath)
+                repo_df.to_parquet(filepath)
+                cached_df = repo_df
+                
+                # Verify if repo data is fresh enough, otherwise we still delta fetch
+                cache_end = cached_df.index.max().normalize()
+                if req_end and req_end <= cache_end:
+                    needs_api_fetch = False
+                else:
+                    delta_start = cache_end + pd.Timedelta(days=1)
+                    fetch_start = delta_start.strftime("%Y-%m-%d")
+                    needs_api_fetch = True
+            except Exception as e:
+                print(f"ℹ️ GitHub Repo bypass/fail ({e}). Proceeding to API tier...")
+        
+        # --- 3. LIVE API FETCH (Delta or Full) ---
+        if needs_api_fetch:
+            print(f"☁️ Pinging API for {series_id} from {fetch_start or 'beginning'}...")
+            try:
+                new_df = None
+                if self.api_key is None:
+                    new_df = web.DataReader(
+                        series_id, "fred", start=fetch_start, end=end_date
+                    )
+                else:
+                    url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={self.api_key}&file_type=json"
+                    if fetch_start:
+                        url += f"&observation_start={fetch_start}"
+                    if end_date:
+                        url += f"&observation_end={end_date}"
 
-                if start_date:
-                    df = df[df.index >= pd.to_datetime(start_date)]
-                if end_date:
-                    df = df[df.index <= pd.to_datetime(end_date)]
-                return df
+                    data = self._make_api_request(url)
+                    if data and "observations" in data and len(data["observations"]) > 0:
+                        new_df = pd.DataFrame(data["observations"])
+                        new_df["DATE"] = pd.to_datetime(new_df["date"])
+                        new_df[series_id] = pd.to_numeric(new_df["value"], errors="coerce")
+                        new_df = new_df.set_index("DATE")[[series_id]]
+                        new_df.dropna(inplace=True)
+
+                # Process the newly downloaded data
+                if new_df is not None and not new_df.empty:
+                    if cached_df is not None:
+                        # Concat new data, overwriting any duplicate dates just in case
+                        combined_df = pd.concat([cached_df, new_df])
+                        combined_df = combined_df[~combined_df.index.duplicated(keep='last')].sort_index()
+                    else:
+                        combined_df = new_df.sort_index()
+
+                    # Save the master dataset back to Parquet
+                    os.makedirs(self.cache_dir, exist_ok=True)
+                    combined_df.to_parquet(filepath)
+                    print(f"✅ Success! Saved updated Parquet data to {filepath}.")
+                    cached_df = combined_df
+                else:
+                    print("🤷 No new data returned from API (Treasury boys might be off!). Using existing cache.")
 
             except Exception as e:
-                # Controlled exception catching during staging
-                print(
-                    f"ℹ️ GitHub Repo lookup bypassed/failed ({e}). Proceeding to API tier..."
-                )
-        else:
-            print(" Skipping GitHub static repo check (Tier disabled).")
+                print(f"❌ An error occurred in API fetch: {e}")
+                # We don't crash here; we just fall back to cached_df if we have one.
 
-        # --- 6. API FETCH (FRED / WEB) ---
-# --- TIER 3: LIVE API FETCH ---
-        print(f"☁️ Fetching fresh {series_id} observations from API...")
-        try:
-            if self.api_key is None:
-                df = web.DataReader(
-                    series_id, "fred", start=start_date, end=end_date
-                )
-            else:
-                url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={self.api_key}&file_type=json"
-                if start_date:
-                    url += f"&observation_start={start_date}"
-                if end_date:
-                    url += f"&observation_end={end_date}"
-
-                data = self._make_api_request(url)
-                if not data or "observations" not in data:
-                    return None
-
-                df = pd.DataFrame(data["observations"])
-                df["DATE"] = pd.to_datetime(df["date"])
-                df[series_id] = pd.to_numeric(df["value"], errors="coerce")
-                df = df.set_index("DATE")
-                df = df[[series_id]]
-
-            df.dropna(inplace=True)
-
-            # Save newly fetched API data to local Parquet cache
-            os.makedirs(self.cache_dir, exist_ok=True)
-            df.to_parquet(filepath)
-            print(f"Success! Saved fresh Parquet data to {filepath}.")
-
-            # Update the JSON file so the 7-day TTL clock resets!
-            if not metadata_updated_this_run:
-                update_metadata()            
-            return df
-
-        except Exception as e:
-            print(f"❌ An error occurred in API fetch: {e}")
+        # --- 4. FILTER AND RETURN ---
+        if cached_df is None or cached_df.empty:
             return None
+
+        final_df = cached_df.copy()
+        
+        # Finally, slice the dataframe to match exactly what the user asked for
+        if req_start:
+            final_df = final_df[final_df.index >= req_start]
+        if req_end:
+            final_df = final_df[final_df.index <= req_end]
+
+        return final_df
