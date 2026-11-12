@@ -162,7 +162,7 @@ class FredReader(FredBase):
             self.api_key
             and end_date
             and "series_last_observed" in metadata
-            and metadata_is_stale
+            # Removed `and metadata_is_stale` here
         ):
             if pd.to_datetime(end_date) > pd.to_datetime(
                 metadata["series_last_observed"]
@@ -184,16 +184,7 @@ class FredReader(FredBase):
                     f"⚠️ Adjusted start date to First Available Data: {start_date}"
                 )
 
-        if "series_last_observed" in metadata and end_date:
-            clamped_end = min(
-                pd.to_datetime(end_date),
-                pd.to_datetime(metadata["series_last_observed"]),
-            )
-            if pd.to_datetime(end_date) > clamped_end:
-                end_date = clamped_end.strftime("%Y-%m-%d")
-                print(
-                    f"⚠️ FRED has no data past {end_date}. Adjusted request to match."
-                )
+
 
         # --- 4. CHECK LOCAL CACHE (PARQUET) ---
         
