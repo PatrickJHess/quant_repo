@@ -19,7 +19,7 @@ else:
     # Use standard local directory for Jupyter/VSCode
     DEFAULT_CACHE_DIR = Path.cwd() / "cache" / "Futures_Static"
 
-def static_futures_data(file_name, cache_dir=DEFAULT_CACHE_DIR, force_update=False, cache_ttl_hours=24):
+def static_futures_data(file_name, index_name='Date',cache_dir=DEFAULT_CACHE_DIR, force_update=False, cache_ttl_hours=24):
     
     # 3. Standardize Parquet Filename and cache
     filename = f"{file_name}.parquet"
@@ -74,5 +74,5 @@ def static_futures_data(file_name, cache_dir=DEFAULT_CACHE_DIR, force_update=Fal
             # Fallback: if GitHub fails but we have a stale cache, use it anyway
             if file_path.exists():
                 print("Falling back to stale local cache due to download error.")
-                return pd.read_parquet(file_path).set_index('Date')
+                return pd.read_parquet(file_path).set_index(index_name)
             return None
