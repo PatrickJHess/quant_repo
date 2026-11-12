@@ -2,6 +2,7 @@
 import json
 import os
 import requests
+import concurrent.futures
 import pandas as pd
 import datetime as dt
 import pandas_datareader.data as web
@@ -30,7 +31,7 @@ class FredReader(FredBase):
 
     # --- PUBLIC WRAPPER METHOD ---
     def get_series(
-        self, series_ids, start_date=None, end_date=None, ttl_days=None
+        self, series_ids, start_date=None, end_date=None
     ):
         """Fetches one or more series and returns them in a single merged DataFrame."""
         if isinstance(series_ids, str):
@@ -40,13 +41,24 @@ class FredReader(FredBase):
 
         dataframes = []
 
-        for series_id in series_ids:
-            print(f"\n☁️--- Processing {series_id} ---")
-            df = self._get_single_series(
+        # Helper function for the thread pool
+        def fetch_worker(series_id):
+            print(f"☁️ Requesting {series_id}...")
+            return self._get_single_series(
                 series_id,
                 start_date=start_date,
                 end_date=end_date,
             )
+
+        print(f"\n🚀 Launching concurrent fetch for {len(series_ids)} series...")
+        
+        # Max workers set to 10 to be polite to the FRED API rate limits (120/min)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            # Map ensures the results come back in the exact order of series_ids
+            results = list(executor.map(fetch_worker, series_ids))
+
+        # Filter out empty results
+        for series_id, df in zip(series_ids, results):
             if df is not None and not df.empty:
                 dataframes.append(df)
             else:
@@ -55,9 +67,16 @@ class FredReader(FredBase):
         if dataframes:
             if len(dataframes) == 1:
                 return dataframes[0]
+                
             print("\n🧩 Merging all series into a single DataFrame...")
             combined_df = pd.concat(dataframes, axis=1, join="outer")
             combined_df.sort_index(inplace=True)
+            
+            # DEFRAGMENTATION STEP: 
+            # Concatenating 20+ dataframes creates severe memory fragmentation under the hood.
+            # .copy() forces Pandas to re-allocate it into a single, clean block of RAM.
+            combined_df = combined_df.copy()
+            
             print("✅ Merge complete!")
             return combined_df
         else:
@@ -166,7 +185,7 @@ class FredReader(FredBase):
                     print(f"✅ Success! Saved updated Parquet data to {filepath}.")
                     cached_df = combined_df
                 else:
-                    print("🤷 No new data returned from API (Treasury boys might be off!). Using existing cache.")
+                    print("🤷 No new data returned from API. Using existing cache.")
 
             except Exception as e:
                 print(f"❌ An error occurred in API fetch: {e}")
