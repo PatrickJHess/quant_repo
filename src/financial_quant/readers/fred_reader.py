@@ -154,71 +154,76 @@ class FredReader(FredBase):
                         f"⏳ Metadata is {days_old} days old (TTL: {ttl_days}). It's stale."
                     )
 
-        # --- 2. SMART PING ---
+        # --- 2. SMART PING (Get LIVE max date from FRED) ---
         if not metadata:
             print(f"🆕 First run for {series_id}. Initializing metadata...")
             update_metadata()
-        elif (
-            self.api_key
-            and end_date
-            and "series_last_observed" in metadata
-            # Removed `and metadata_is_stale` here
-        ):
-            if pd.to_datetime(end_date) > pd.to_datetime(
-                metadata["series_last_observed"]
-            ):
-                print(
-                    "🔎 Requested date exceeds known end date. Checking for updates..."
-                )
-                update_metadata()
+            
+        # 1. Start by assuming FRED's max is what we saved in the JSON ("the last time we looked")
+        true_fred_max = None
+        if "series_last_observed" in metadata:
+            true_fred_max = pd.to_datetime(metadata["series_last_observed"]).normalize()
+
+        if self.api_key and end_date and true_fred_max:
+            req_date = pd.to_datetime(end_date).normalize()
+            
+            # 2. If the user wants a date NEWER than our cached JSON...
+            if req_date > true_fred_max:
+                print("🔎 Requested date exceeds cached FRED max. Pinging live FRED servers...")
+                if update_metadata():  
+                    # update_metadata() just hit FRED's servers and got the real-time max date.
+                    # 3. Update our true_fred_max to the LIVE date straight from FRED!
+                    true_fred_max = pd.to_datetime(metadata["series_last_observed"]).normalize()
+                    
+                    # Crucial: Reset the stale flag so Step 4 knows it can trust the cache again!
+                    metadata_is_stale = False
 
         # --- 3. CLAMP DATES ---
         if "series_inception" in metadata and start_date:
             clamped_start = max(
-                pd.to_datetime(start_date),
-                pd.to_datetime(metadata["series_inception"]),
+                pd.to_datetime(start_date).normalize(),
+                pd.to_datetime(metadata["series_inception"]).normalize(),
             )
-            if pd.to_datetime(start_date) < clamped_start:
+            if pd.to_datetime(start_date).normalize() < clamped_start:
                 start_date = clamped_start.strftime("%Y-%m-%d")
-                print(
-                    f"⚠️ Adjusted start date to First Available Data: {start_date}"
-                )
+                print(f"⚠️ Adjusted start date to First Available Data: {start_date}")
 
-
+        if end_date and true_fred_max:
+            # 4. Now we clamp against the TRUE FRED MAX (which we verified from the live servers)
+            req_end = pd.to_datetime(end_date).normalize()
+            
+            if req_end > true_fred_max:
+                end_date = true_fred_max.strftime("%Y-%m-%d")
+                print(f"⚠️ Live FRED servers have no data past {end_date}. Adjusted request to match.")
 
         # --- 4. CHECK LOCAL CACHE (PARQUET) ---
-        
         if os.path.exists(filepath) and not metadata_is_stale:
             try:
                 df = pd.read_parquet(filepath)
-                cache_start, cache_end = df.index.min(), df.index.max()
+                cache_start = df.index.min().normalize()
+                cache_end = df.index.max().normalize()
 
                 valid_start = not (
                     start_date
-                    and pd.to_datetime(start_date)
-                    < cache_start - pd.Timedelta(days=5)
+                    and pd.to_datetime(start_date).normalize() < cache_start - pd.Timedelta(days=5)
                 )
                 valid_end = not (
-                    end_date and pd.to_datetime(end_date) > cache_end
+                    end_date and pd.to_datetime(end_date).normalize() > cache_end
                 )
 
                 if valid_start and valid_end:
                     print(f"✅ Loaded {series_id} from local Parquet cache.")
 
                     if start_date:
-                        df = df[df.index >= pd.to_datetime(start_date)]
+                        df = df[df.index >= pd.to_datetime(start_date).normalize()]
                     else:
-                        first_date_str = cache_start.strftime("%Y-%m-%d")
-                        print(f"⚠️ No start date provided. Starting at first date in cache: {first_date_str}")
+                        print(f"⚠️ No start date provided. Starting at first date in cache: {cache_start.strftime('%Y-%m-%d')}")
 
                     if end_date:
-                        df = df[df.index <= pd.to_datetime(end_date)]
+                        df = df[df.index <= pd.to_datetime(end_date).normalize()]
                     return df
             except Exception as e:
-                print(
-                    f"⚠️ Local cache corrupt or unreadable: {e}. Moving to next tier..."
-                )
-
+                print(f"⚠️ Local cache corrupt or unreadable: {e}. Moving to next tier...")
         # --- 5. CHECK GITHUB STATIC DATA REPO TIER ---
         if self.enable_github_repo and self.github_raw_base:
             github_url = f"{self.github_raw_base}/{series_id}_fred.parquet"
