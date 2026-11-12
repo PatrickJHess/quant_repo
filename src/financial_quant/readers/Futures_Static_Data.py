@@ -41,7 +41,7 @@ def static_futures_data(file_name, index_name='Date',cache_dir=DEFAULT_CACHE_DIR
     # 5. Tier 1: Load Local Cache (If exists, not forced, and not stale)
     if file_path.exists() and not force_update and not is_cache_stale:
         print(f"Loading Parquet data from local cache: {filename}")
-        return pd.read_parquet(file_path).set_index('Date')
+        return pd.read_parquet(file_path).set_index(index_name)
 
     # 6. Tier 2: Cache is stale or forced update from github repo
     else:
@@ -67,7 +67,7 @@ def static_futures_data(file_name, index_name='Date',cache_dir=DEFAULT_CACHE_DIR
             df.to_parquet(file_path, index=False)
 
             # Set index and return
-            return df.set_index('Date')
+            return df.set_index(index_name)
 
         except Exception as e:
             print(f"Error loading Parquet data: {e}")
