@@ -720,7 +720,7 @@ def calc_par_yield(months_to_maturity, interim_estimates, sofr_rate=None, freq=6
     # 5. Calculate Absolute Time (T) from TODAY (t=0)
     df['T_absolute'] = (df['relative_months'] + forward_start_months) / 12.0
     
-    # 6. Get Spot Rates via your Nelson-Siegel function
+    # 6. Get Spot Rates via our Nelson-Siegel function
     # if sofr_rate present check coeff
     if sofr_rate is not None and len(interim_estimates)>3:
       interim_estimates=list(interim_estimates)
