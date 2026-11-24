@@ -52,47 +52,46 @@ def static_futures_data(
         df = pd.read_parquet(file_path).set_index(index_name)
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
-
         if start_date is not None and df.index.min() > pd.to_datetime(start_date):
             is_out_of_bounds = True
         elif end_date is not None and df.index.max() < pd.to_datetime(end_date):
             is_out_of_bounds = True
+
         else:
             print(f"Loading Parquet data from local cache: {filename}")
             return df
 
     # 6. Tier 2: Cache is stale or forced update from github repo
+    # Determine the reason for logging
+    if force_update:
+        reason = "Force update requested"
+    elif is_cache_stale:
+        reason = f"Cache older than {cache_ttl_hours} hours"
+    elif is_out_of_bounds:
+        reason = "Requested dates outside local cache range"
     else:
-        # Determine the reason for logging
-        if force_update:
-            reason = "Force update requested"
-        elif is_cache_stale:
-            reason = f"Cache older than {cache_ttl_hours} hours"
-        elif is_out_of_bounds:
-            reason = "Requested dates outside local cache range"
-        else:
-            reason = "Not found in cache"
+        reason = "Not found in cache"
 
-        print(f"Fetching Parquet data from GitHub ({reason}): {filename}")
+    print(f"Fetching Parquet data from GitHub ({reason}): {filename}")
 
-        github_url = f"{GITHUB_RAW_BASE_URL}/{filename}"
-        try:
-            response = requests.get(github_url, timeout=10)
-            response.raise_for_status()
+    github_url = f"{GITHUB_RAW_BASE_URL}/{filename}"
+    try:
+        response = requests.get(github_url, timeout=10)
+        response.raise_for_status()
 
-            # Read into Pandas
-            df = pd.read_parquet(BytesIO(response.content))
+        # Read into Pandas
+        df = pd.read_parquet(BytesIO(response.content))
 
-            # Save fresh copy to cache (this automatically resets the file's timestamp)
-            df.to_parquet(file_path, index=False)
+        # Save fresh copy to cache (this automatically resets the file's timestamp)
+        df.to_parquet(file_path, index=False)
 
-            # Set index and return
-            return df.set_index(index_name)
+        # Set index and return
+        return df.set_index(index_name)
 
-        except Exception as e:
-            print(f"Error loading Parquet data: {e}")
-            # Fallback: if GitHub fails but we have a stale cache, use it anyway
-            if file_path.exists():
-                print("Falling back to stale local cache due to download error.")
-                return pd.read_parquet(file_path).set_index(index_name)
-            return None
+    except Exception as e:
+        print(f"Error loading Parquet data: {e}")
+        # Fallback: if GitHub fails but we have a stale cache, use it anyway
+        if file_path.exists():
+            print("Falling back to stale local cache due to download error.")
+            return pd.read_parquet(file_path).set_index(index_name)
+    return None
