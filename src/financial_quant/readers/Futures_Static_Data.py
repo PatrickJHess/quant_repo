@@ -19,7 +19,15 @@ else:
     # Use standard local directory for Jupyter/VSCode
     DEFAULT_CACHE_DIR = Path.cwd() / "cache" / "Futures_Static"
 
-def static_futures_data(file_name, index_name='Date',cache_dir=DEFAULT_CACHE_DIR, force_update=False, cache_ttl_hours=24):
+def static_futures_data(
+    file_name,
+    index_name='Date',
+    start_date=None,
+    end_date=None,
+    cache_dir=DEFAULT_CACHE_DIR,
+    force_update=False,
+    cache_ttl_hours=24
+):
     
     # 3. Standardize Parquet Filename and cache
     filename = f"{file_name}.parquet"
@@ -38,10 +46,20 @@ def static_futures_data(file_name, index_name='Date',cache_dir=DEFAULT_CACHE_DIR
         if file_age_seconds > (cache_ttl_hours * 3600):
             is_cache_stale = True
 
-    # 5. Tier 1: Load Local Cache (If exists, not forced, and not stale)
+# 5. Tier 1: Load Local Cache (If exists, not forced, not stale, and covers required dates)
+    is_out_of_bounds = False
     if file_path.exists() and not force_update and not is_cache_stale:
-        print(f"Loading Parquet data from local cache: {filename}")
-        return pd.read_parquet(file_path).set_index(index_name)
+        df = pd.read_parquet(file_path).set_index(index_name)
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+
+        if start_date is not None and df.index.min() > pd.to_datetime(start_date):
+            is_out_of_bounds = True
+        elif end_date is not None and df.index.max() < pd.to_datetime(end_date):
+            is_out_of_bounds = True
+        else:
+            print(f"Loading Parquet data from local cache: {filename}")
+            return df
 
     # 6. Tier 2: Cache is stale or forced update from github repo
     else:
@@ -50,6 +68,8 @@ def static_futures_data(file_name, index_name='Date',cache_dir=DEFAULT_CACHE_DIR
             reason = "Force update requested"
         elif is_cache_stale:
             reason = f"Cache older than {cache_ttl_hours} hours"
+        elif is_out_of_bounds:
+        reason = "Requested dates outside local cache range"
         else:
             reason = "Not found in cache"
 
