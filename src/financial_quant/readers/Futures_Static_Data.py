@@ -46,7 +46,7 @@ def static_futures_data(
         if file_age_seconds > (cache_ttl_hours * 3600):
             is_cache_stale = True
 
-# 5. Tier 1: Load Local Cache (If exists, not forced, not stale, and covers required dates)
+    # 5. Tier 1: Load Local Cache (If exists, not forced, not stale, and covers required dates)
     is_out_of_bounds = False
     if file_path.exists() and not force_update and not is_cache_stale:
         df = pd.read_parquet(file_path).set_index(index_name)
@@ -69,7 +69,7 @@ def static_futures_data(
         elif is_cache_stale:
             reason = f"Cache older than {cache_ttl_hours} hours"
         elif is_out_of_bounds:
-        reason = "Requested dates outside local cache range"
+            reason = "Requested dates outside local cache range"
         else:
             reason = "Not found in cache"
 
