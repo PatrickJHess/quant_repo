@@ -85,8 +85,24 @@ def static_futures_data(
         # Save fresh copy to cache (this automatically resets the file's timestamp)
         df.to_parquet(file_path, index=False)
 
-        # Set index and return
-        return df.set_index(index_name)
+        # Set index first, then slice if start_date / end_date are provided
+        out = df.set_index(index_name).sort_index()
+
+        # Ensure index is a sorted DatetimeIndex before slicing
+        out = df.set_index(index_name)
+        out.index = pd.to_datetime(out.index)
+        out = out.sort_index() 
+
+        if not isinstance(out.index, pd.DatetimeIndex):
+            out.index = pd.to_datetime(out.index)
+        if start_date is not None and end_date is not None:
+            return out.loc[start_date:end_date].copy()
+        elif start_date is not None:
+            return out.loc[start_date:].copy()
+        elif end_date is not None:
+            return out.loc[:end_date].copy()
+
+        return out
 
     except Exception as e:
         print(f"Error loading Parquet data: {e}")
