@@ -160,11 +160,11 @@ def static_futures_data(
 
         # Ensure index is a sorted DatetimeIndex before slicing
         out = df.set_index(index_name)
-        out.index = pd.to_datetime(out.index)
+        out.index = pd.to_datetime(out.index, format="%Y-%m-%d")
         out = out.sort_index() 
 
         if not isinstance(out.index, pd.DatetimeIndex):
-            out.index = pd.to_datetime(out.index)
+            out.index = pd.to_datetime(out.index, format="%Y-%m-%d")
         if start_date is not None and end_date is not None:
             return out.loc[start_date:end_date].copy()
         elif start_date is not None:
@@ -210,11 +210,11 @@ def static_futures_data(
 
         # Ensure index is a sorted DatetimeIndex before slicing
         out = df.set_index(index_name)
-        out.index = pd.to_datetime(out.index)
+        out.index = pd.to_datetime(out.index, format="%Y-%m-%d")
         out = out.sort_index() 
 
         if not isinstance(out.index, pd.DatetimeIndex):
-            out.index = pd.to_datetime(out.index)
+            out.index = pd.to_datetime(out.index, format="%Y-%m-%d")
         if start_date is not None and end_date is not None:
             return out.loc[start_date:end_date].copy()
         elif start_date is not None:
